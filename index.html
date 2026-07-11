@@ -324,7 +324,7 @@
     <button id="statsBtn" class="ctrl-btn">통계</button>
   </div>
 
-  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · S 통계</div>
+  <div id="hint">화면 탭 시작/정지 · 1-4 시간 선택 · 5 직접 입력 · S 통계</div>
 
   <div id="customDim"></div>
   <div id="customPanel">
@@ -752,6 +752,13 @@
   }
 
   // ---------- Controls ----------
+  // 빈 화면 아무 데나 탭하면 시작/정지 (버튼·패널·입력창 터치는 제외)
+  document.getElementById("app").addEventListener("click", function (e) {
+    var t = e.target;
+    if (t.closest && t.closest("button, input, #statsPanel, #customPanel, #statsDim, #customDim, #controls, #presets")) return;
+    togglePause();
+  });
+
   startPauseBtn.addEventListener("click", togglePause);
   resetBtn.addEventListener("click", reset);
   skipBtn.addEventListener("click", skip);
