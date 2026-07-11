@@ -357,12 +357,13 @@
   var PRESET_KEY = "studyTimer_preset";
   var DAY_RESET_HOUR = 2; // "오늘 공부시간"은 매일 새벽 2시에 리셋
 
-  // focus-duration presets: focus/break/longBreak in minutes, "every" = long-break cadence
+  // focus-duration presets: focus minutes only. break/longBreak are computed dynamically
+  // from actual elapsed focus time (see advanceSession).
   var PRESETS = {
-    "25":  { focus: 25,  brk: 5,  long: 15, every: 4 },
-    "50":  { focus: 50,  brk: 10, long: 20, every: 3 },
-    "80":  { focus: 80,  brk: 15, long: 20, every: 2 },
-    "100": { focus: 100, brk: 15, long: 20, every: 2 }
+    "25":  { focus: 25 },
+    "50":  { focus: 50 },
+    "80":  { focus: 80 },
+    "100": { focus: 100 }
   };
 
   // ---------- State ----------
@@ -372,7 +373,8 @@
   var endTime = null;          // Date.now() timestamp when current session ends
   var remainingMs = PRESETS[currentPresetKey].focus * 60 * 1000; // used while paused / not started
   var lastTickTime = null;     // last time we accounted focus study time
-  var completedFocusCount = 0; // pomodoros completed this session (in-memory)
+  var accumFocusMin = 0;       // 마지막 긴 휴식 이후 누적 실제 집중 분 (in-memory, 새로고침 시 0으로 리셋됨)
+  var currentBreakMs = null;   // 현재/다음 휴식 세션 길이 (advanceSession에서 설정, durationForMode가 참조)
   var intervalId = null;
 
   // ---------- DOM ----------
@@ -403,10 +405,9 @@
   }
 
   function durationForMode(m) {
-    var p = currentPreset();
-    if (m === "focus") return p.focus * 60 * 1000;
-    if (m === "longBreak") return p.long * 60 * 1000;
-    return p.brk * 60 * 1000;
+    if (m === "focus") return currentPreset().focus * 60 * 1000;
+    if (currentBreakMs != null) return currentBreakMs;
+    return (m === "longBreak") ? 15 * 60 * 1000 : 3 * 60 * 1000; // 안전 기본값
   }
 
   function formatClock(ms) {
@@ -609,15 +610,6 @@
     updateDisplay();
   }
 
-  function nextMode() {
-    if (mode === "focus") {
-      completedFocusCount += 1;
-      var every = currentPreset().every;
-      return (completedFocusCount % every === 0) ? "longBreak" : "break";
-    }
-    return "focus";
-  }
-
   // keepRunning: 다음 세션을 자동으로 시작할지. 타이머가 0이 되어 넘어갈 땐 true,
   // 사용자가 '건너뛰기'로 넘길 땐 지금 돌아가는 중이었는지를 그대로 유지한다.
   function advanceSession(playSound, keepRunning) {
@@ -627,7 +619,28 @@
       addStudyTime(now - lastTickTime);
     }
     var prevMode = mode;
-    mode = nextMode();
+
+    if (prevMode === "focus") {
+      // 방금 끝낸 집중 세션의 실제 공부 시간(분) = 설정 시간 - 남은 시간
+      var elapsedMs = durationForMode("focus") - (running ? Math.max(0, endTime - now) : remainingMs);
+      if (elapsedMs < 0) elapsedMs = 0;
+      var elapsedMin = Math.round(elapsedMs / 60000);
+      var total = accumFocusMin + elapsedMin;
+
+      if (total >= 150) {
+        mode = "longBreak";
+        currentBreakMs = 15 * 60 * 1000;
+        accumFocusMin = 0;
+      } else {
+        mode = "break";
+        var restMin = Math.max(3, Math.min(5, Math.round(elapsedMin * 0.07)));
+        currentBreakMs = restMin * 60 * 1000;
+        accumFocusMin = total;
+      }
+    } else {
+      mode = "focus";
+    }
+
     remainingMs = durationForMode(mode);
     if (playSound) playBeep();
 
@@ -680,14 +693,9 @@
   // ---------- Custom focus duration ----------
   var CUSTOM_KEY = "studyTimer_customMinutes";
 
-  // 휴식은 집중 시간에 비례해 자동 계산: 집중의 1/5 (5~15분 사이로 제한)
+  // 휴식 시간은 더 이상 프리셋에 저장하지 않는다 - 실제 집중 시간 기반으로 advanceSession에서 계산.
   function buildCustomPreset(min) {
-    return {
-      focus: min,
-      brk: Math.min(15, Math.max(5, Math.round(min / 5))),
-      long: 20,
-      every: min >= 80 ? 2 : (min >= 50 ? 3 : 4)
-    };
+    return { focus: min };
   }
 
   function applyCustomMinutes(min) {
