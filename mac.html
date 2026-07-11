@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>25:00</title>
+<style>
+  :root {
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden; /* no scrollbars */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Mono", "Menlo", monospace;
+    user-select: none;
+  }
+
+  #app {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Huge centered timer digits */
+  #timer {
+    font-size: 20vmin;
+    font-weight: 200;
+    letter-spacing: 0.03em;
+    color: rgba(255,255,255,0.85);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    transition: color 0.3s ease;
+  }
+
+  /* mode label + session count */
+  #meta {
+    margin-top: 1.2vmin;
+    display: flex;
+    align-items: center;
+    gap: 1.4vmin;
+    color: rgba(255,255,255,0.35);
+    font-size: 2vmin;
+    letter-spacing: 0.1em;
+  }
+
+  #modeLabel { text-transform: uppercase; }
+
+  #studyTime { opacity: 0.9; }
+
+  /* bottom controls */
+  #controls {
+    position: absolute;
+    bottom: 22px;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    font-size: 12px;
+    letter-spacing: 0.03em;
+  }
+
+  .ctrl-btn {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.4);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+    opacity: 0.55;
+    transition: opacity 0.15s ease, color 0.15s ease;
+  }
+  .ctrl-btn:hover { opacity: 1; color: rgba(255,255,255,0.9); }
+  .ctrl-btn:active { opacity: 0.7; }
+
+  /* focus-duration presets */
+  #presets {
+    position: absolute;
+    bottom: 54px;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
+
+  .preset-btn {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.4);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 3px 4px;
+    opacity: 0.4;
+    transition: opacity 0.15s ease, color 0.15s ease;
+  }
+  .preset-btn:hover { opacity: 0.8; color: rgba(255,255,255,0.9); }
+  .preset-btn.active {
+    opacity: 1;
+    color: rgba(255,255,255,0.95);
+    text-decoration: underline;
+  }
+
+  /* help hint */
+  #hint {
+    position: absolute;
+    bottom: 4px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 10px;
+    color: rgba(255,255,255,0.18);
+    letter-spacing: 0.02em;
+    pointer-events: none;
+  }
+
+  /* music toggle + panel */
+  #musicPanel {
+    position: absolute;
+    left: 18px;
+    bottom: 60px;
+    width: 300px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 10px;
+    backdrop-filter: blur(2px);
+    transition: opacity 0.2s ease;
+  }
+
+  #musicPanel.collapsed {
+    /* keep iframe alive in DOM but hide visually per spec */
+    height: 0;
+    padding: 0;
+    border: none;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  #musicPanel .row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  #musicUrl {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    color: rgba(255,255,255,0.75);
+    font-size: 11px;
+    padding: 6px 8px;
+    outline: none;
+    font-family: inherit;
+    min-width: 0;
+  }
+  #musicUrl::placeholder { color: rgba(255,255,255,0.25); }
+
+  #musicLoad {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 4px;
+    color: rgba(255,255,255,0.7);
+    font-size: 11px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  #musicLoad:hover { background: rgba(255,255,255,0.14); color: #fff; }
+
+  #musicError {
+    font-size: 10px;
+    color: rgba(255,120,120,0.7);
+    min-height: 14px;
+    margin-bottom: 4px;
+  }
+
+  #musicFrameWrap {
+    width: 100%;
+    height: 180px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.02);
+  }
+
+  #musicFrame {
+    width: 100%;
+    height: 100%;
+    border: none;
+    display: block;
+  }
+
+  #musicControlsRow {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  .music-mini-btn {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.4);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 2px 6px;
+    opacity: 0.6;
+    transition: opacity 0.15s ease, color 0.15s ease;
+  }
+  .music-mini-btn:hover { opacity: 1; color: rgba(255,255,255,0.9); }
+  .music-mini-btn:active { opacity: 0.75; }
+
+  #musicTrackTitle {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    color: rgba(255,255,255,0.3);
+  }
+
+  /* custom duration panel */
+  #customDim {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: none;
+    z-index: 60;
+  }
+  #customDim.open { display: block; }
+
+  #customPanel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 260px;
+    background: rgba(22,22,22,0.97);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 18px;
+    backdrop-filter: blur(12px);
+    z-index: 61;
+    display: none;
+  }
+  #customPanel.open { display: block; }
+
+  #customPanel h3 {
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.5);
+    letter-spacing: 0.05em;
+  }
+
+  #customPanel .row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  #customMinutes {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    color: rgba(255,255,255,0.85);
+    font-size: 16px;
+    padding: 8px 10px;
+    outline: none;
+    font-family: inherit;
+    min-width: 0;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  #customMinutes::placeholder { color: rgba(255,255,255,0.25); font-size: 12px; }
+  /* hide number input spinners */
+  #customMinutes::-webkit-outer-spin-button,
+  #customMinutes::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+  #customHint {
+    font-size: 10px;
+    color: rgba(255,255,255,0.25);
+    text-align: center;
+  }
+
+  /* stats panel */
+  #statsDim {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: none;
+    z-index: 50;
+  }
+  #statsDim.open { display: block; }
+
+  #statsPanel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 360px;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    background: rgba(22,22,22,0.97);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 18px;
+    backdrop-filter: blur(12px);
+    z-index: 51;
+    display: none;
+  }
+  #statsPanel.open { display: block; }
+
+  #statsPanel h3 {
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.5);
+    letter-spacing: 0.05em;
+  }
+
+  #statsCloseBtn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+  }
+
+  #statsWeekChart {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    height: 100px;
+    margin-bottom: 8px;
+  }
+
+  .stats-bar-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    height: 100%;
+    justify-content: flex-end;
+  }
+
+  .stats-bar {
+    width: 100%;
+    background: rgba(255,255,255,0.18);
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+  }
+  .stats-bar.today { background: rgba(255,255,255,0.55); }
+
+  .stats-bar-label {
+    font-size: 9px;
+    color: rgba(255,255,255,0.3);
+  }
+
+  #statsWeekTotal {
+    font-size: 11px;
+    color: rgba(255,255,255,0.4);
+    margin-bottom: 20px;
+  }
+
+  #statsHeatmap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+
+  .stats-heat-cell {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.04);
+  }
+  .stats-heat-cell.lvl1 { background: rgba(255,255,255,0.16); }
+  .stats-heat-cell.lvl2 { background: rgba(255,255,255,0.36); }
+  .stats-heat-cell.lvl3 { background: rgba(255,255,255,0.62); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="timer">25:00</div>
+  <div id="meta">
+    <span id="modeLabel">집중</span>
+    <span id="studyTime">오늘: 0분</span>
+  </div>
+
+  <div id="musicPanel" class="collapsed">
+    <div class="row">
+      <input id="musicUrl" type="text" placeholder="유튜브 URL 붙여넣기 (동영상 또는 재생목록)">
+      <button id="musicLoad" class="ctrl-btn" style="opacity:1;">재생</button>
+    </div>
+    <div id="musicError"></div>
+    <div id="musicFrameWrap">
+      <div id="musicFrame"></div>
+    </div>
+    <div id="musicControlsRow">
+      <button id="musicPlayPauseBtn" class="music-mini-btn" title="재생/일시정지">▶</button>
+      <button id="musicNextBtn" class="music-mini-btn" title="다음 곡">⏭</button>
+      <span id="musicTrackTitle"></span>
+    </div>
+  </div>
+
+  <div id="presets">
+    <button class="preset-btn" data-preset="25">25분</button>
+    <button class="preset-btn" data-preset="50">50분</button>
+    <button class="preset-btn" data-preset="80">80분</button>
+    <button class="preset-btn" data-preset="100">100분</button>
+    <button class="preset-btn" data-preset="custom" id="customPresetBtn">직접</button>
+  </div>
+
+  <div id="controls">
+    <button id="startPauseBtn" class="ctrl-btn">시작</button>
+    <button id="resetBtn" class="ctrl-btn">리셋</button>
+    <button id="skipBtn" class="ctrl-btn">건너뛰기</button>
+    <button id="fullscreenBtn" class="ctrl-btn">전체화면</button>
+    <button id="musicToggleBtn" class="ctrl-btn">♪ 음악</button>
+    <button id="statsBtn" class="ctrl-btn">통계</button>
+  </div>
+
+  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · S 통계 · M 음악 · P 재생/일시정지</div>
+
+  <div id="customDim"></div>
+  <div id="customPanel">
+    <h3>집중 시간 직접 설정</h3>
+    <div class="row">
+      <input id="customMinutes" type="number" min="1" max="300" placeholder="분 (예: 40)">
+      <button id="customConfirmBtn" class="ctrl-btn" style="opacity:1;">확인</button>
+    </div>
+    <div id="customHint">숫자만 입력 · Enter 확인 · ESC 취소</div>
+  </div>
+
+  <div id="statsDim"></div>
+  <div id="statsPanel">
+    <button id="statsCloseBtn" class="ctrl-btn">✕</button>
+    <h3>최근 7일</h3>
+    <div id="statsWeekChart"></div>
+    <div id="statsWeekTotal"></div>
+    <h3>최근 30일</h3>
+    <div id="statsHeatmap"></div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Constants ----------
+  var TICK_MS = 250;
+  var PRESET_KEY = "studyTimer_preset";
+  var DAY_RESET_HOUR = 2; // "오늘 공부시간"은 매일 새벽 2시에 리셋
+
+  // focus-duration presets: focus/break/longBreak in minutes, "every" = long-break cadence
+  var PRESETS = {
+    "25":  { focus: 25,  brk: 5,  long: 15, every: 4 },
+    "50":  { focus: 50,  brk: 10, long: 20, every: 3 },
+    "80":  { focus: 80,  brk: 15, long: 20, every: 2 },
+    "100": { focus: 100, brk: 15, long: 20, every: 2 }
+  };
+
+  // ---------- State ----------
+  var currentPresetKey = "25"; // overwritten from localStorage during init()
+  var mode = "focus";          // 'focus' | 'break' | 'longBreak'
+  var running = false;
+  var endTime = null;          // Date.now() timestamp when current session ends
+  var remainingMs = PRESETS[currentPresetKey].focus * 60 * 1000; // used while paused / not started
+  var lastTickTime = null;     // last time we accounted focus study time
+  var completedFocusCount = 0; // pomodoros completed this session (in-memory)
+  var intervalId = null;
+
+  // ---------- DOM ----------
+  var timerEl = document.getElementById("timer");
+  var modeLabelEl = document.getElementById("modeLabel");
+  var studyTimeEl = document.getElementById("studyTime");
+  var startPauseBtn = document.getElementById("startPauseBtn");
+  var resetBtn = document.getElementById("resetBtn");
+  var skipBtn = document.getElementById("skipBtn");
+  var fullscreenBtn = document.getElementById("fullscreenBtn");
+  var musicToggleBtn = document.getElementById("musicToggleBtn");
+  var musicPanel = document.getElementById("musicPanel");
+  var musicUrlInput = document.getElementById("musicUrl");
+  var musicLoadBtn = document.getElementById("musicLoad");
+  var musicError = document.getElementById("musicError");
+  var musicPlayPauseBtn = document.getElementById("musicPlayPauseBtn");
+  var musicNextBtn = document.getElementById("musicNextBtn");
+  var musicTrackTitle = document.getElementById("musicTrackTitle");
+  var presetBtns = Array.prototype.slice.call(document.querySelectorAll(".preset-btn"));
+  var customDim = document.getElementById("customDim");
+  var customPanel = document.getElementById("customPanel");
+  var customMinutesInput = document.getElementById("customMinutes");
+  var customConfirmBtn = document.getElementById("customConfirmBtn");
+  var customPresetBtn = document.getElementById("customPresetBtn");
+  var statsBtn = document.getElementById("statsBtn");
+  var statsDim = document.getElementById("statsDim");
+  var statsPanel = document.getElementById("statsPanel");
+  var statsCloseBtn = document.getElementById("statsCloseBtn");
+  var statsWeekChart = document.getElementById("statsWeekChart");
+  var statsWeekTotal = document.getElementById("statsWeekTotal");
+  var statsHeatmap = document.getElementById("statsHeatmap");
+
+  // ---------- Helpers ----------
+  function currentPreset() {
+    return PRESETS[currentPresetKey] || PRESETS["25"];
+  }
+
+  function durationForMode(m) {
+    var p = currentPreset();
+    if (m === "focus") return p.focus * 60 * 1000;
+    if (m === "longBreak") return p.long * 60 * 1000;
+    return p.brk * 60 * 1000;
+  }
+
+  function formatClock(ms) {
+    var totalSec = Math.max(0, Math.ceil(ms / 1000));
+    var min = Math.floor(totalSec / 60);
+    var sec = totalSec % 60;
+    return (min < 10 ? "0" + min : min) + ":" + (sec < 10 ? "0" + sec : sec);
+  }
+
+  // 하루의 경계를 새벽 2시로 옮긴다: 00:00~01:59 는 아직 "어제"로 계산.
+  function dateForDayOffset(daysAgo) {
+    return new Date(Date.now() - DAY_RESET_HOUR * 60 * 60 * 1000 - (daysAgo || 0) * 24 * 60 * 60 * 1000);
+  }
+
+  function dayKeyFromDate(d) {
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, "0");
+    var day = String(d.getDate()).padStart(2, "0");
+    return y + "-" + m + "-" + day;
+  }
+
+  function dayKeyForOffset(daysAgo) {
+    return dayKeyFromDate(dateForDayOffset(daysAgo));
+  }
+
+  function todayKey() {
+    return dayKeyForOffset(0);
+  }
+
+  function getStoredStudyMs() {
+    var v = localStorage.getItem("studyTime_" + todayKey());
+    return v ? parseInt(v, 10) || 0 : 0;
+  }
+
+  function addStudyTime(deltaMs) {
+    if (deltaMs <= 0) return;
+    var key = "studyTime_" + todayKey();
+    var current = parseInt(localStorage.getItem(key) || "0", 10) || 0;
+    var updated = current + deltaMs;
+    localStorage.setItem(key, String(updated));
+    renderStudyTime(updated);
+  }
+
+  function formatStudyTime(ms) {
+    var totalMin = Math.floor(ms / 60000);
+    var hours = Math.floor(totalMin / 60);
+    var minutes = totalMin % 60;
+    if (hours > 0) {
+      return hours + "시간 " + minutes + "분";
+    }
+    return minutes + "분";
+  }
+
+  function renderStudyTime(ms) {
+    studyTimeEl.textContent = "오늘: " + formatStudyTime(ms);
+  }
+
+  function modeLabelText(m) {
+    if (m === "focus") return "집중";
+    return "휴식";
+  }
+
+  function updateDisplay() {
+    var msToShow = running ? Math.max(0, endTime - Date.now()) : remainingMs;
+    var clock = formatClock(msToShow);
+    timerEl.textContent = clock;
+    modeLabelEl.textContent = modeLabelText(mode);
+    document.title = clock + " · " + modeLabelText(mode);
+    startPauseBtn.textContent = running ? "정지" : "시작";
+  }
+
+  // ---------- Audio beep (Web Audio API, no external file) ----------
+  var audioCtx = null;
+  function playBeep() {
+    try {
+      if (!audioCtx) {
+        var AudioCtx = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioCtx();
+      }
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      var now = audioCtx.currentTime;
+      // two short beeps
+      [0, 0.22].forEach(function (offset) {
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.0001, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.25, now + offset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.18);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.2);
+      });
+    } catch (e) {
+      // ignore audio errors silently
+    }
+  }
+
+  // ---------- Notifications ----------
+  var NOTIFICATION_TAG = "study-timer-session";
+  var notificationPermissionRequested = false;
+
+  function requestNotificationPermissionOnce() {
+    if (notificationPermissionRequested) return;
+    notificationPermissionRequested = true;
+    try {
+      if (typeof Notification === "undefined") return;
+      if (Notification.permission === "default") {
+        Notification.requestPermission();
+      }
+    } catch (e) {
+      // ignore unsupported browsers
+    }
+  }
+
+  function notifySessionChange(prevMode) {
+    try {
+      if (typeof Notification === "undefined") return;
+      if (Notification.permission !== "granted") return;
+      var title = (prevMode === "focus") ? "집중 끝! 휴식 시간 🍅" : "휴식 끝! 다시 집중 💪";
+      new Notification(title, { tag: NOTIFICATION_TAG });
+    } catch (e) {
+      // ignore notification errors silently
+    }
+  }
+
+  // ---------- Music auto pause/resume around sessions ----------
+  var musicPausedByApp = false;
+
+  function pauseMusicForBreak() {
+    if (!player || !playerReady) return;
+    try {
+      var state = player.getPlayerState ? player.getPlayerState() : -1;
+      if (state === YT.PlayerState.PLAYING) {
+        player.pauseVideo();
+        musicPausedByApp = true;
+      }
+    } catch (e) {
+      // ignore player errors silently
+    }
+  }
+
+  function resumeMusicForFocus() {
+    if (!musicPausedByApp) return;
+    musicPausedByApp = false;
+    if (!player || !playerReady) return;
+    try {
+      player.playVideo();
+    } catch (e) {
+      // ignore player errors silently
+    }
+  }
+
+  // ---------- Timer control ----------
+  function start() {
+    if (running) return;
+    requestNotificationPermissionOnce();
+    running = true;
+    endTime = Date.now() + remainingMs;
+    lastTickTime = Date.now();
+    if (!intervalId) intervalId = setInterval(tick, TICK_MS);
+    updateDisplay();
+  }
+
+  function pause() {
+    if (!running) return;
+    var now = Date.now();
+    // account any elapsed focus time up to this moment
+    if (mode === "focus" && lastTickTime) {
+      addStudyTime(now - lastTickTime);
+    }
+    remainingMs = Math.max(0, endTime - now);
+    running = false;
+    updateDisplay();
+  }
+
+  function togglePause() {
+    if (running) pause(); else start();
+  }
+
+  function reset() {
+    running = false;
+    remainingMs = durationForMode(mode);
+    endTime = null;
+    lastTickTime = null;
+    updateDisplay();
+  }
+
+  function nextMode() {
+    if (mode === "focus") {
+      completedFocusCount += 1;
+      var every = currentPreset().every;
+      return (completedFocusCount % every === 0) ? "longBreak" : "break";
+    }
+    return "focus";
+  }
+
+  // keepRunning: 다음 세션을 자동으로 시작할지. 타이머가 0이 되어 넘어갈 땐 true,
+  // 사용자가 '건너뛰기'로 넘길 땐 지금 돌아가는 중이었는지를 그대로 유지한다.
+  function advanceSession(playSound, keepRunning) {
+    var now = Date.now();
+    // account final elapsed focus time for the session that's ending
+    if (running && mode === "focus" && lastTickTime) {
+      addStudyTime(now - lastTickTime);
+    }
+    var prevMode = mode;
+    mode = nextMode();
+    remainingMs = durationForMode(mode);
+    if (playSound) playBeep();
+
+    // music auto pause/resume around focus <-> break transitions
+    if (prevMode === "focus") {
+      pauseMusicForBreak();
+    } else {
+      resumeMusicForFocus();
+    }
+
+    if (playSound) {
+      notifySessionChange(prevMode);
+    }
+
+    running = keepRunning;
+    if (running) {
+      endTime = Date.now() + remainingMs;
+      lastTickTime = Date.now();
+    } else {
+      endTime = null;
+      lastTickTime = null;
+    }
+    updateDisplay();
+  }
+
+  function skip() {
+    // 돌아가는 중이면 계속 진행, 멈춰 있으면 멈춘 채로 다음 세션 준비
+    advanceSession(false, running);
+  }
+
+  // ---------- Focus-duration presets ----------
+  function updatePresetButtonsUI() {
+    presetBtns.forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-preset") === currentPresetKey);
+    });
+  }
+
+  function selectPreset(key) {
+    if (!PRESETS[key]) return;
+    currentPresetKey = key;
+    localStorage.setItem(PRESET_KEY, key);
+
+    // reset current session to the new focus duration; keep tomato count & study time intact
+    running = false;
+    mode = "focus";
+    remainingMs = durationForMode(mode);
+    endTime = null;
+    lastTickTime = null;
+
+    updatePresetButtonsUI();
+    updateDisplay();
+  }
+
+  // ---------- Custom focus duration ----------
+  var CUSTOM_KEY = "studyTimer_customMinutes";
+
+  // 휴식은 집중 시간에 비례해 자동 계산: 집중의 1/5 (5~15분 사이로 제한)
+  function buildCustomPreset(min) {
+    return {
+      focus: min,
+      brk: Math.min(15, Math.max(5, Math.round(min / 5))),
+      long: 20,
+      every: min >= 80 ? 2 : (min >= 50 ? 3 : 4)
+    };
+  }
+
+  function applyCustomMinutes(min) {
+    PRESETS["custom"] = buildCustomPreset(min);
+    customPresetBtn.textContent = min + "분 (직접)";
+  }
+
+  function openCustomInput() {
+    var stored = parseInt(localStorage.getItem(CUSTOM_KEY) || "", 10);
+    customMinutesInput.value = stored > 0 ? String(stored) : "";
+    customDim.classList.add("open");
+    customPanel.classList.add("open");
+    customMinutesInput.focus();
+    customMinutesInput.select();
+  }
+
+  function closeCustomInput() {
+    customDim.classList.remove("open");
+    customPanel.classList.remove("open");
+    customMinutesInput.blur();
+  }
+
+  function confirmCustomInput() {
+    var min = parseInt(customMinutesInput.value, 10);
+    if (!min || min < 1 || min > 300) {
+      customMinutesInput.value = "";
+      customMinutesInput.placeholder = "1~300 사이 숫자";
+      return;
+    }
+    localStorage.setItem(CUSTOM_KEY, String(min));
+    applyCustomMinutes(min);
+    closeCustomInput();
+    selectPreset("custom");
+  }
+
+  customConfirmBtn.addEventListener("click", confirmCustomInput);
+  customDim.addEventListener("click", closeCustomInput);
+  customMinutesInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      confirmCustomInput();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeCustomInput();
+    }
+    e.stopPropagation();
+  });
+
+  function tick() {
+    if (!running) return;
+    var now = Date.now();
+    if (mode === "focus" && lastTickTime) {
+      addStudyTime(now - lastTickTime);
+    }
+    lastTickTime = now;
+    var remaining = endTime - now;
+    if (remaining <= 0) {
+      advanceSession(true, true); // 자동으로 다음 세션 시작
+      return;
+    }
+    updateDisplay();
+  }
+
+  // ---------- Controls ----------
+  startPauseBtn.addEventListener("click", togglePause);
+  resetBtn.addEventListener("click", reset);
+  skipBtn.addEventListener("click", skip);
+
+  presetBtns.forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      var key = btn.getAttribute("data-preset");
+      if (key === "custom") {
+        openCustomInput();
+      } else {
+        selectPreset(key);
+      }
+      if (e.target && e.target.blur) e.target.blur();
+    });
+  });
+
+  fullscreenBtn.addEventListener("click", toggleFullscreen);
+
+  function toggleFullscreen() {
+    try {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(function () {});
+      } else {
+        document.exitFullscreen().catch(function () {});
+      }
+    } catch (e) {
+      // ignore fullscreen errors silently
+    }
+  }
+
+  // ---------- Keyboard shortcuts ----------
+  document.addEventListener("keydown", function (e) {
+    var target = e.target;
+    var isTyping = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+    if (isTyping) return;
+
+    var mod = e.metaKey || e.ctrlKey;
+
+    // modifier combos first
+    if (e.key === "Enter" && mod) {
+      e.preventDefault();
+      toggleFullscreen();
+      return;
+    }
+    if (e.code === "F8" && mod) {
+      e.preventDefault();
+      toggleMusicPlayback();
+      return;
+    }
+    // don't hijack other cmd/ctrl shortcuts (cmd+R reload 등)
+    if (mod) return;
+
+    // e.code 기준 판정: 한글 입력 상태에서도 물리 키 위치로 동작
+    if (e.code === "Space") {
+      e.preventDefault();
+      togglePause();
+    } else if (e.code === "KeyR") {
+      e.preventDefault();
+      reset();
+    } else if (e.code === "Digit1" || e.code === "Numpad1") {
+      e.preventDefault();
+      selectPreset("25");
+    } else if (e.code === "Digit2" || e.code === "Numpad2") {
+      e.preventDefault();
+      selectPreset("50");
+    } else if (e.code === "Digit3" || e.code === "Numpad3") {
+      e.preventDefault();
+      selectPreset("80");
+    } else if (e.code === "Digit4" || e.code === "Numpad4") {
+      e.preventDefault();
+      selectPreset("100");
+    } else if (e.code === "Digit5" || e.code === "Numpad5") {
+      e.preventDefault();
+      openCustomInput();
+    } else if (e.code === "KeyS") {
+      e.preventDefault();
+      toggleStats();
+    } else if (e.code === "KeyM") {
+      e.preventDefault();
+      musicPanel.classList.toggle("collapsed");
+    } else if (e.code === "KeyP") {
+      e.preventDefault();
+      toggleMusicPlayback();
+    } else if (e.key === "Escape") {
+      if (customPanel.classList.contains("open")) {
+        e.preventDefault();
+        closeCustomInput();
+      } else if (statsPanel.classList.contains("open")) {
+        e.preventDefault();
+        closeStats();
+      }
+    }
+  });
+
+  // ---------- Stats panel ----------
+  var KOREAN_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+
+  function renderStatsPanel() {
+    // week bar chart (oldest -> newest, today last)
+    statsWeekChart.innerHTML = "";
+    var weekData = [];
+    for (var i = 6; i >= 0; i--) {
+      var d = dateForDayOffset(i);
+      var key = dayKeyFromDate(d);
+      var ms = parseInt(localStorage.getItem("studyTime_" + key) || "0", 10) || 0;
+      weekData.push({ ms: ms, weekday: d.getDay(), isToday: i === 0 });
+    }
+    var maxMs = 0;
+    weekData.forEach(function (w) { if (w.ms > maxMs) maxMs = w.ms; });
+
+    weekData.forEach(function (w) {
+      var col = document.createElement("div");
+      col.className = "stats-bar-col";
+
+      var bar = document.createElement("div");
+      bar.className = "stats-bar" + (w.isToday ? " today" : "");
+      var heightPct = maxMs > 0 ? Math.max(2, Math.round((w.ms / maxMs) * 100)) : 2;
+      bar.style.height = heightPct + "%";
+      bar.title = formatStudyTime(w.ms);
+
+      var label = document.createElement("div");
+      label.className = "stats-bar-label";
+      label.textContent = KOREAN_WEEKDAYS[w.weekday];
+
+      col.appendChild(bar);
+      col.appendChild(label);
+      statsWeekChart.appendChild(col);
+    });
+
+    var weekTotal = weekData.reduce(function (sum, w) { return sum + w.ms; }, 0);
+    statsWeekTotal.textContent = "이번 주: " + formatStudyTime(weekTotal);
+
+    // 30-day heatmap (oldest -> newest)
+    statsHeatmap.innerHTML = "";
+    for (var j = 29; j >= 0; j--) {
+      var hd = dateForDayOffset(j);
+      var hkey = dayKeyFromDate(hd);
+      var hms = parseInt(localStorage.getItem("studyTime_" + hkey) || "0", 10) || 0;
+
+      var lvl = 0;
+      if (hms >= 3 * 60 * 60 * 1000) lvl = 3;
+      else if (hms >= 60 * 60 * 1000) lvl = 2;
+      else if (hms > 0) lvl = 1;
+
+      var cell = document.createElement("div");
+      cell.className = "stats-heat-cell" + (lvl > 0 ? " lvl" + lvl : "");
+      cell.title = (hd.getMonth() + 1) + "월 " + hd.getDate() + "일 · " + formatStudyTime(hms);
+      statsHeatmap.appendChild(cell);
+    }
+  }
+
+  function openStats() {
+    renderStatsPanel();
+    statsDim.classList.add("open");
+    statsPanel.classList.add("open");
+  }
+
+  function closeStats() {
+    statsDim.classList.remove("open");
+    statsPanel.classList.remove("open");
+  }
+
+  function toggleStats() {
+    if (statsPanel.classList.contains("open")) closeStats(); else openStats();
+  }
+
+  statsBtn.addEventListener("click", function (e) {
+    toggleStats();
+    if (e.target && e.target.blur) e.target.blur();
+  });
+  statsDim.addEventListener("click", closeStats);
+  statsCloseBtn.addEventListener("click", function (e) {
+    closeStats();
+    if (e.target && e.target.blur) e.target.blur();
+  });
+
+  // ---------- Music (YouTube IFrame Player API) ----------
+  var MUSIC_URL_KEY = "studyTimer_lastYoutubeUrl";
+  var DEFAULT_PLAYLIST_URL = "https://youtube.com/playlist?list=PLVx_Hd6b1shjuDCz05SZr_n_auFBpRIcn";
+
+  // parses a youtube URL into { videoId, listId } (either may be null, but not both)
+  function parseYoutubeUrl(rawUrl) {
+    var url;
+    try {
+      url = new URL(rawUrl.trim());
+    } catch (e) {
+      return null;
+    }
+    var host = url.hostname.replace(/^www\./, "");
+    var validHosts = ["youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"];
+    if (validHosts.indexOf(host) === -1) return null;
+
+    var videoId = null;
+    var listId = url.searchParams.get("list"); // si= and other params are simply ignored
+
+    if (host === "youtu.be") {
+      videoId = url.pathname.replace(/^\//, "").split("/")[0] || null;
+    } else {
+      videoId = url.searchParams.get("v");
+      if (!videoId) {
+        // support /embed/VIDEOID or /shorts/VIDEOID paths
+        var m = url.pathname.match(/\/(embed|shorts)\/([^/?]+)/);
+        if (m) videoId = m[2];
+      }
+      // /playlist?list=... paths have no video id; listId above already captures it
+    }
+
+    if (!videoId && !listId) return null;
+    return { videoId: videoId || null, listId: listId || null };
+  }
+
+  // ---------- YouTube IFrame Player API (loaded lazily on first use) ----------
+  var ytApiLoading = false;
+  var ytApiCallbacks = [];
+  var player = null;
+  var playerReady = false;
+  var playerReadyCallbacks = [];
+  var pendingShuffleForListId = null; // set right after loadPlaylist to arm the shuffle-once pattern
+  var hasLoadedOnce = false;
+
+  function loadYouTubeIframeApiIfNeeded(cb) {
+    if (window.YT && window.YT.Player) {
+      cb();
+      return;
+    }
+    ytApiCallbacks.push(cb);
+    if (ytApiLoading) return;
+    ytApiLoading = true;
+    var previousReady = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = function () {
+      if (typeof previousReady === "function") {
+        try { previousReady(); } catch (e) {}
+      }
+      var callbacks = ytApiCallbacks;
+      ytApiCallbacks = [];
+      callbacks.forEach(function (fn) { fn(); });
+    };
+    var tag = document.createElement("script");
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+  }
+
+  function withPlayer(cb) {
+    if (playerReady && player) {
+      cb(player);
+      return;
+    }
+    playerReadyCallbacks.push(cb);
+    if (player) return; // creation already kicked off, just wait
+    loadYouTubeIframeApiIfNeeded(function () {
+      player = new YT.Player("musicFrame", {
+        width: "320",
+        height: "180",
+        playerVars: { autoplay: 0, playsinline: 1, rel: 0 },
+        events: {
+          onReady: function () {
+            playerReady = true;
+            var callbacks = playerReadyCallbacks;
+            playerReadyCallbacks = [];
+            callbacks.forEach(function (fn) { fn(player); });
+          },
+          onStateChange: onPlayerStateChange,
+          onError: function () {
+            musicError.textContent = "재생 오류가 발생했어요";
+          }
+        }
+      });
+    });
+  }
+
+  function onPlayerStateChange(e) {
+    updatePlayPauseIcon(e.data);
+    updateTrackTitle();
+
+    // robust shuffle pattern: setShuffle right after loadPlaylist frequently doesn't
+    // take effect, so wait for the first CUED/PLAYING state after loading, then shuffle
+    // and jump to a random track.
+    if (pendingShuffleForListId && (e.data === YT.PlayerState.CUED || e.data === YT.PlayerState.PLAYING)) {
+      pendingShuffleForListId = null;
+      try {
+        player.setShuffle(true);
+        var pl = player.getPlaylist();
+        var idx = (pl && pl.length) ? Math.floor(Math.random() * pl.length) : 0;
+        player.playVideoAt(idx);
+      } catch (err) {
+        // ignore
+      }
+    }
+  }
+
+  function updatePlayPauseIcon(state) {
+    var s = state;
+    if (typeof s !== "number") {
+      s = (player && player.getPlayerState) ? player.getPlayerState() : -1;
+    }
+    musicPlayPauseBtn.textContent = (s === YT.PlayerState.PLAYING) ? "⏸" : "▶";
+  }
+
+  function updateTrackTitle() {
+    try {
+      var data = (player && player.getVideoData) ? player.getVideoData() : null;
+      var title = (data && data.title) ? data.title : "";
+      musicTrackTitle.textContent = title;
+      musicTrackTitle.title = title;
+    } catch (e) {
+      musicTrackTitle.textContent = "";
+    }
+  }
+
+  function loadMusic(rawUrl) {
+    musicError.textContent = "";
+    var parsed = parseYoutubeUrl(rawUrl);
+    if (!parsed) {
+      musicError.textContent = "올바른 유튜브 링크가 아니에요";
+      return;
+    }
+    localStorage.setItem(MUSIC_URL_KEY, rawUrl.trim());
+    hasLoadedOnce = true;
+    withPlayer(function (p) {
+      musicTrackTitle.textContent = "";
+      if (parsed.listId) {
+        // loadPlaylist 는 큐만 잡는 cuePlaylist 와 달리 바로 재생을 시작한다.
+        pendingShuffleForListId = parsed.listId;
+        p.loadPlaylist({ listType: "playlist", list: parsed.listId, index: 0, suggestedQuality: "small" });
+      } else if (parsed.videoId) {
+        pendingShuffleForListId = null;
+        p.loadVideoById(parsed.videoId);
+      }
+    });
+  }
+
+  musicLoadBtn.addEventListener("click", function (e) {
+    loadMusic(musicUrlInput.value);
+    if (e.target && e.target.blur) e.target.blur();
+  });
+  musicUrlInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      loadMusic(musicUrlInput.value);
+    }
+    // prevent Space/R/etc. from being swallowed by global shortcuts while typing
+    e.stopPropagation();
+  });
+
+  musicToggleBtn.addEventListener("click", function (e) {
+    musicPanel.classList.toggle("collapsed");
+    if (e.target && e.target.blur) e.target.blur();
+  });
+
+  function toggleMusicPlayback() {
+    if (!hasLoadedOnce) {
+      // nothing loaded into the player yet: load current input and let it play
+      loadMusic(musicUrlInput.value);
+    } else {
+      withPlayer(function (p) {
+        var state = p.getPlayerState ? p.getPlayerState() : -1;
+        if (state === YT.PlayerState.PLAYING) {
+          p.pauseVideo();
+        } else {
+          p.playVideo();
+        }
+      });
+    }
+  }
+
+  musicPlayPauseBtn.addEventListener("click", function (e) {
+    toggleMusicPlayback();
+    if (e.target && e.target.blur) e.target.blur();
+  });
+
+  musicNextBtn.addEventListener("click", function (e) {
+    if (hasLoadedOnce) {
+      withPlayer(function (p) {
+        if (p.nextVideo) p.nextVideo();
+      });
+    }
+    if (e.target && e.target.blur) e.target.blur();
+  });
+
+  // ---------- Init ----------
+  function init() {
+    // restore custom preset first so "custom" is selectable below
+    var storedCustom = parseInt(localStorage.getItem(CUSTOM_KEY) || "", 10);
+    if (storedCustom >= 1 && storedCustom <= 300) {
+      applyCustomMinutes(storedCustom);
+    }
+
+    var storedPreset = localStorage.getItem(PRESET_KEY);
+    if (storedPreset && PRESETS[storedPreset]) {
+      currentPresetKey = storedPreset;
+    }
+    remainingMs = durationForMode(mode);
+    updatePresetButtonsUI();
+
+    renderStudyTime(getStoredStudyMs());
+    updateDisplay();
+
+    // prefill the music url input (auto-remember default playlist when nothing saved yet),
+    // but do NOT load the YouTube API or start any playback until the user acts.
+    var lastUrl = localStorage.getItem(MUSIC_URL_KEY);
+    if (!lastUrl) {
+      lastUrl = DEFAULT_PLAYLIST_URL;
+      localStorage.setItem(MUSIC_URL_KEY, lastUrl);
+    }
+    musicUrlInput.value = lastUrl;
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
