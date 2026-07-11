@@ -606,35 +606,6 @@
     startPauseBtn.textContent = running ? "정지" : "시작";
   }
 
-  // ---------- Audio beep (Web Audio API, no external file) ----------
-  var audioCtx = null;
-  function playBeep() {
-    try {
-      if (!audioCtx) {
-        var AudioCtx = window.AudioContext || window.webkitAudioContext;
-        audioCtx = new AudioCtx();
-      }
-      if (audioCtx.state === "suspended") audioCtx.resume();
-      var now = audioCtx.currentTime;
-      // two short beeps
-      [0, 0.22].forEach(function (offset) {
-        var osc = audioCtx.createOscillator();
-        var gain = audioCtx.createGain();
-        osc.type = "sine";
-        osc.frequency.value = 880;
-        gain.gain.setValueAtTime(0.0001, now + offset);
-        gain.gain.exponentialRampToValueAtTime(0.25, now + offset + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.18);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start(now + offset);
-        osc.stop(now + offset + 0.2);
-      });
-    } catch (e) {
-      // ignore audio errors silently
-    }
-  }
-
   // ---------- Notifications ----------
   var NOTIFICATION_TAG = "study-timer-session";
   var notificationPermissionRequested = false;
@@ -757,7 +728,6 @@
     }
 
     remainingMs = durationForMode(mode);
-    if (playSound) playBeep();
 
     // music auto pause/resume around focus <-> break transitions
     if (prevMode === "focus") {
