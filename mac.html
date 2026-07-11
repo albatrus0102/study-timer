@@ -304,6 +304,17 @@
     text-align: center;
   }
 
+  /* blackout (B key) */
+  #blackout {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 100;
+    display: none;
+    cursor: none;
+  }
+  #blackout.on { display: block; }
+
   /* stats panel */
   #statsDim {
     position: fixed;
@@ -444,7 +455,7 @@
     <button id="statsBtn" class="ctrl-btn">통계</button>
   </div>
 
-  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · N 건너뛰기 · S 통계 · M 음악 · P 재생/일시정지</div>
+  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · 6 스톱워치 · N 건너뛰기 · S 통계 · M 음악 · P 재생/일시정지 · ,/. 곡 이동 · B 화면 끄기</div>
 
   <div id="customDim"></div>
   <div id="customPanel">
@@ -455,6 +466,8 @@
     </div>
     <div id="customHint">숫자만 입력 · Enter 확인 · ESC 취소</div>
   </div>
+
+  <div id="blackout"></div>
 
   <div id="statsDim"></div>
   <div id="statsPanel">
@@ -976,6 +989,12 @@
     updateDisplay();
   }
 
+  // ---------- Blackout ----------
+  var blackoutEl = document.getElementById("blackout");
+  blackoutEl.addEventListener("click", function () {
+    blackoutEl.classList.remove("on");
+  });
+
   // ---------- Controls ----------
   startPauseBtn.addEventListener("click", togglePause);
   resetBtn.addEventListener("click", reset);
@@ -1051,6 +1070,22 @@
     } else if (e.code === "Digit5" || e.code === "Numpad5") {
       e.preventDefault();
       openCustomInput();
+    } else if (e.code === "Digit6" || e.code === "Numpad6") {
+      e.preventDefault();
+      selectPreset("stopwatch");
+    } else if (e.code === "KeyB") {
+      e.preventDefault();
+      blackoutEl.classList.toggle("on");
+    } else if (e.code === "Comma") {
+      e.preventDefault();
+      if (hasLoadedOnce) {
+        withPlayer(function (p) { if (p.previousVideo) p.previousVideo(); });
+      }
+    } else if (e.code === "Period") {
+      e.preventDefault();
+      if (hasLoadedOnce) {
+        withPlayer(function (p) { if (p.nextVideo) p.nextVideo(); });
+      }
     } else if (e.code === "KeyN" || e.code === "ArrowRight") {
       e.preventDefault();
       skip();
