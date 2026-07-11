@@ -444,7 +444,7 @@
     <button id="statsBtn" class="ctrl-btn">통계</button>
   </div>
 
-  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · S 통계 · M 음악 · P 재생/일시정지</div>
+  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · N 건너뛰기 · S 통계 · M 음악 · P 재생/일시정지</div>
 
   <div id="customDim"></div>
   <div id="customPanel">
@@ -1051,6 +1051,9 @@
     } else if (e.code === "Digit5" || e.code === "Numpad5") {
       e.preventDefault();
       openCustomInput();
+    } else if (e.code === "KeyN" || e.code === "ArrowRight") {
+      e.preventDefault();
+      skip();
     } else if (e.code === "KeyS") {
       e.preventDefault();
       toggleStats();
