@@ -682,6 +682,8 @@
     } else {
       mode = "break";
       var restMin = Math.max(3, Math.min(5, Math.round(elapsedMin * 0.07)));
+      // 휴식이 공부한 시간보다 길 수는 없다 (짧은 세션·테스트 대비, 최소 1분)
+      if (elapsedMin < restMin) restMin = Math.max(1, elapsedMin);
       currentBreakMs = restMin * 60 * 1000;
       accumFocusMin = total;
     }
