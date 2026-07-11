@@ -16,7 +16,7 @@
     height: 100%;
     background: #000;
     overflow: hidden; /* no scrollbars */
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Mono", "Menlo", monospace;
+    font-family: ui-rounded, -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Mono", "Menlo", monospace;
     user-select: none;
   }
 
@@ -38,7 +38,7 @@
     color: rgba(255,255,255,0.85);
     font-variant-numeric: tabular-nums;
     line-height: 1;
-    font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    font-family: ui-rounded, "SF Mono", "Menlo", "Consolas", monospace;
     transition: color 0.3s ease;
   }
 
@@ -67,7 +67,7 @@
     align-items: center;
     justify-content: center;
     gap: 22px;
-    font-size: 12px;
+    font-size: 14px;
     letter-spacing: 0.03em;
   }
 
@@ -77,9 +77,9 @@
     color: rgba(255,255,255,0.4);
     cursor: pointer;
     font-family: inherit;
-    font-size: 12px;
+    font-size: 14px;
     padding: 4px 6px;
-    opacity: 0.55;
+    opacity: 0.75;
     transition: opacity 0.15s ease, color 0.15s ease;
   }
   .ctrl-btn:hover { opacity: 1; color: rgba(255,255,255,0.9); }
@@ -95,7 +95,7 @@
     align-items: center;
     justify-content: center;
     gap: 16px;
-    font-size: 11px;
+    font-size: 13px;
     letter-spacing: 0.03em;
   }
 
@@ -105,9 +105,9 @@
     color: rgba(255,255,255,0.4);
     cursor: pointer;
     font-family: inherit;
-    font-size: 11px;
+    font-size: 13px;
     padding: 3px 4px;
-    opacity: 0.4;
+    opacity: 0.6;
     transition: opacity 0.15s ease, color 0.15s ease;
   }
   .preset-btn:hover { opacity: 0.8; color: rgba(255,255,255,0.9); }
@@ -124,8 +124,8 @@
     left: 0;
     right: 0;
     text-align: center;
-    font-size: 10px;
-    color: rgba(255,255,255,0.18);
+    font-size: 11px;
+    color: rgba(255,255,255,0.3);
     letter-spacing: 0.02em;
     pointer-events: none;
   }
@@ -432,6 +432,7 @@
     <button class="preset-btn" data-preset="80">80분</button>
     <button class="preset-btn" data-preset="100">100분</button>
     <button class="preset-btn" data-preset="custom" id="customPresetBtn">직접</button>
+    <button class="preset-btn" data-preset="stopwatch" id="stopwatchPresetBtn">스톱워치</button>
   </div>
 
   <div id="controls">
@@ -477,7 +478,7 @@
   var DAY_RESET_HOUR = 2; // "오늘 공부시간"은 매일 새벽 2시에 리셋
 
   // focus-duration presets: focus minutes only. break/longBreak are computed dynamically
-  // from actual elapsed focus time (see advanceSession).
+  // from actual elapsed focus time (see startBreakFromFocus).
   var PRESETS = {
     "25":  { focus: 25 },
     "50":  { focus: 50 },
@@ -493,8 +494,11 @@
   var remainingMs = PRESETS[currentPresetKey].focus * 60 * 1000; // used while paused / not started
   var lastTickTime = null;     // last time we accounted focus study time
   var accumFocusMin = 0;       // 마지막 긴 휴식 이후 누적 실제 집중 분 (in-memory, 새로고침 시 0으로 리셋됨)
-  var currentBreakMs = null;   // 현재/다음 휴식 세션 길이 (advanceSession에서 설정, durationForMode가 참조)
+  var currentBreakMs = null;   // 현재/다음 휴식 세션 길이 (startBreakFromFocus에서 설정, durationForMode가 참조)
   var intervalId = null;
+  var overtimeNotified = false; // 이번 집중 세션에서 "목표 시간 완료" 알림을 이미 보냈는지
+  var swElapsedMs = 0;          // 스톱워치 모드: 일시정지 구간까지 누적된 경과 시간
+  var swSegmentStart = null;    // 스톱워치 모드: 현재 재생 구간이 시작된 시각 (일시정지 중엔 null)
 
   // ---------- DOM ----------
   var timerEl = document.getElementById("timer");
@@ -531,6 +535,10 @@
     return PRESETS[currentPresetKey] || PRESETS["25"];
   }
 
+  function isStopwatchMode() {
+    return currentPresetKey === "stopwatch";
+  }
+
   function durationForMode(m) {
     if (m === "focus") return currentPreset().focus * 60 * 1000;
     if (currentBreakMs != null) return currentBreakMs;
@@ -542,6 +550,36 @@
     var min = Math.floor(totalSec / 60);
     var sec = totalSec % 60;
     return (min < 10 ? "0" + min : min) + ":" + (sec < 10 ? "0" + sec : sec);
+  }
+
+  function formatStopwatch(ms) {
+    var totalSec = Math.max(0, Math.floor(ms / 1000));
+    var h = Math.floor(totalSec / 3600);
+    var m = Math.floor((totalSec % 3600) / 60);
+    var s = totalSec % 60;
+    var mm = (m < 10 ? "0" + m : String(m));
+    var ss = (s < 10 ? "0" + s : String(s));
+    return h > 0 ? (h + ":" + mm + ":" + ss) : (mm + ":" + ss);
+  }
+
+  // 현재 재생 구간까지 포함한, 지금 이 순간의 실제 집중 경과 시간(ms).
+  // 스톱워치 모드에선 누적치 그대로, 카운트다운 모드에선 (설정 시간 - 남은 시간)으로
+  // 계산하므로 초과(overtime) 상태에서는 자연스럽게 설정 시간보다 커진다.
+  function focusElapsedMs(now) {
+    if (isStopwatchMode()) {
+      return swElapsedMs + ((running && swSegmentStart) ? (now - swSegmentStart) : 0);
+    }
+    var duration = durationForMode("focus");
+    var remaining = running ? (endTime - now) : remainingMs;
+    return Math.max(0, duration - remaining);
+  }
+
+  // 집중 모드에서 카운트다운이 0을 지나 초과(overtime) 상태로 들어갔는지.
+  // 스톱워치 모드에는 초과 개념이 없다.
+  function isOvertime() {
+    if (isStopwatchMode()) return false;
+    if (mode !== "focus" || !running || endTime == null) return false;
+    return (endTime - Date.now()) <= 0;
   }
 
   // 하루의 경계를 새벽 2시로 옮긴다: 00:00~01:59 는 아직 "어제"로 계산.
@@ -593,17 +631,29 @@
   }
 
   function modeLabelText(m) {
-    if (m === "focus") return "집중";
+    if (m === "focus") return isOvertime() ? "초과" : "집중";
     return "휴식";
   }
 
   function updateDisplay() {
-    var msToShow = running ? Math.max(0, endTime - Date.now()) : remainingMs;
-    var clock = formatClock(msToShow);
+    var clock, label;
+    if (isStopwatchMode() && mode === "focus") {
+      var elapsed = swElapsedMs + ((running && swSegmentStart) ? (Date.now() - swSegmentStart) : 0);
+      clock = formatStopwatch(elapsed);
+      label = "집중";
+    } else if (isOvertime()) {
+      var overtimeMs = Date.now() - endTime;
+      clock = "+" + formatClock(overtimeMs);
+      label = "초과";
+    } else {
+      var msToShow = running ? Math.max(0, endTime - Date.now()) : remainingMs;
+      clock = formatClock(msToShow);
+      label = modeLabelText(mode);
+    }
     timerEl.textContent = clock;
-    modeLabelEl.textContent = modeLabelText(mode);
-    document.title = clock + " · " + modeLabelText(mode);
-    startPauseBtn.textContent = running ? "정지" : "시작";
+    modeLabelEl.textContent = label;
+    document.title = clock + " · " + label;
+    startPauseBtn.textContent = isOvertime() ? "휴식 시작" : (running ? "정지" : "시작");
   }
 
   // ---------- Notifications ----------
@@ -623,12 +673,23 @@
     }
   }
 
-  function notifySessionChange(prevMode) {
+  // 집중 카운트다운이 0에 도달해 초과(overtime) 상태로 들어가는 순간, 세션당 1회
+  function notifyOvertime() {
     try {
       if (typeof Notification === "undefined") return;
       if (Notification.permission !== "granted") return;
-      var title = (prevMode === "focus") ? "집중 끝! 휴식 시간 🍅" : "휴식 끝! 다시 집중 💪";
-      new Notification(title, { tag: NOTIFICATION_TAG });
+      new Notification("목표 시간 완료! 쉴 준비되면 탭", { tag: NOTIFICATION_TAG });
+    } catch (e) {
+      // ignore notification errors silently
+    }
+  }
+
+  // 휴식 카운트다운이 0에 도달해 대기 상태로 들어가는 순간
+  function notifyBreakOver() {
+    try {
+      if (typeof Notification === "undefined") return;
+      if (Notification.permission !== "granted") return;
+      new Notification("휴식 끝! 탭해서 집중 시작", { tag: NOTIFICATION_TAG });
     } catch (e) {
       // ignore notification errors silently
     }
@@ -666,9 +727,16 @@
     if (running) return;
     requestNotificationPermissionOnce();
     running = true;
-    endTime = Date.now() + remainingMs;
+    // 스톱워치 카운트업은 집중 세션에만 해당 — 스톱워치발 휴식은 일반 카운트다운
+    if (isStopwatchMode() && mode === "focus") {
+      swSegmentStart = Date.now();
+    } else {
+      endTime = Date.now() + remainingMs;
+    }
     lastTickTime = Date.now();
     if (!intervalId) intervalId = setInterval(tick, TICK_MS);
+    // 휴식이 끝나고 대기하던 사용자가 집중을 다시 시작하는 이 시점에 음악을 재개한다.
+    resumeMusicForFocus();
     updateDisplay();
   }
 
@@ -679,66 +747,74 @@
     if (mode === "focus" && lastTickTime) {
       addStudyTime(now - lastTickTime);
     }
-    remainingMs = Math.max(0, endTime - now);
+    if (isStopwatchMode() && mode === "focus") {
+      swElapsedMs += now - swSegmentStart;
+      swSegmentStart = null;
+    } else {
+      remainingMs = Math.max(0, endTime - now);
+    }
     running = false;
     updateDisplay();
   }
 
+  // 카운트다운 중(초과 전)에는 일시정지/재개. 초과(overtime) 상태에서는
+  // 일시정지 대신 곧바로 휴식을 시작한다 (설계상 초과 상태에서 멈춘 채로 대기하는 상태는 없음).
   function togglePause() {
-    if (running) pause(); else start();
+    if (running) {
+      if (isOvertime()) {
+        startBreakFromFocus(true);
+      } else {
+        pause();
+      }
+    } else {
+      start();
+    }
   }
 
   function reset() {
     running = false;
-    remainingMs = durationForMode(mode);
+    overtimeNotified = false;
+    if (isStopwatchMode() && mode === "focus") {
+      swElapsedMs = 0;
+      swSegmentStart = null;
+      remainingMs = 0;
+    } else {
+      remainingMs = durationForMode(mode);
+    }
     endTime = null;
     lastTickTime = null;
     updateDisplay();
   }
 
-  // keepRunning: 다음 세션을 자동으로 시작할지. 타이머가 0이 되어 넘어갈 땐 true,
-  // 사용자가 '건너뛰기'로 넘길 땐 지금 돌아가는 중이었는지를 그대로 유지한다.
-  function advanceSession(playSound, keepRunning) {
+  // 집중 → 휴식으로 전환한다. 실제 집중 경과 시간(focusElapsedMs, 초과분 포함)을 기준으로
+  // 휴식/긴휴식 길이와 누적 집중 분을 계산한다 (기존 알고리즘 그대로).
+  // keepRunning: 전환 직후 휴식을 바로 카운트다운 시작할지 (일시정지 중 건너뛰기라면 false).
+  function startBreakFromFocus(keepRunning) {
     var now = Date.now();
-    // account final elapsed focus time for the session that's ending
     if (running && mode === "focus" && lastTickTime) {
       addStudyTime(now - lastTickTime);
     }
-    var prevMode = mode;
 
-    if (prevMode === "focus") {
-      // 방금 끝낸 집중 세션의 실제 공부 시간(분) = 설정 시간 - 남은 시간
-      var elapsedMs = durationForMode("focus") - (running ? Math.max(0, endTime - now) : remainingMs);
-      if (elapsedMs < 0) elapsedMs = 0;
-      var elapsedMin = Math.round(elapsedMs / 60000);
-      var total = accumFocusMin + elapsedMin;
+    var elapsedMs = focusElapsedMs(now);
+    var elapsedMin = Math.round(elapsedMs / 60000);
+    var total = accumFocusMin + elapsedMin;
 
-      if (total >= 150) {
-        mode = "longBreak";
-        currentBreakMs = 15 * 60 * 1000;
-        accumFocusMin = 0;
-      } else {
-        mode = "break";
-        var restMin = Math.max(3, Math.min(5, Math.round(elapsedMin * 0.07)));
-        currentBreakMs = restMin * 60 * 1000;
-        accumFocusMin = total;
-      }
+    if (total >= 150) {
+      mode = "longBreak";
+      currentBreakMs = 15 * 60 * 1000;
+      accumFocusMin = 0;
     } else {
-      mode = "focus";
+      mode = "break";
+      var restMin = Math.max(3, Math.min(5, Math.round(elapsedMin * 0.07)));
+      currentBreakMs = restMin * 60 * 1000;
+      accumFocusMin = total;
     }
 
     remainingMs = durationForMode(mode);
+    overtimeNotified = false;
 
-    // music auto pause/resume around focus <-> break transitions
-    if (prevMode === "focus") {
-      pauseMusicForBreak();
-    } else {
-      resumeMusicForFocus();
-    }
-
-    if (playSound) {
-      notifySessionChange(prevMode);
-    }
+    // 휴식이 실제로 시작되는 이 시점에 음악을 일시정지한다.
+    pauseMusicForBreak();
 
     running = keepRunning;
     if (running) {
@@ -751,9 +827,33 @@
     updateDisplay();
   }
 
+  // 휴식 → 집중 대기 상태로 전환한다. 자동으로 집중을 시작하지 않고 탭/시작 버튼을 기다린다.
+  function goToFocusWaiting(notify) {
+    mode = "focus";
+    running = false;
+    overtimeNotified = false;
+    if (isStopwatchMode()) {
+      swElapsedMs = 0;
+      swSegmentStart = null;
+      remainingMs = 0;
+    } else {
+      remainingMs = durationForMode("focus");
+    }
+    endTime = null;
+    lastTickTime = null;
+    if (notify) notifyBreakOver();
+    updateDisplay();
+  }
+
   function skip() {
-    // 돌아가는 중이면 계속 진행, 멈춰 있으면 멈춘 채로 다음 세션 준비
-    advanceSession(false, running);
+    if (mode === "focus") {
+      // 돌아가는 중이면 계속 진행, 멈춰 있으면 멈춘 채로 휴식 준비
+      startBreakFromFocus(running);
+    } else {
+      // 휴식을 수동으로 건너뛴 건 명시적 행동이므로 바로 집중 시작
+      goToFocusWaiting(false);
+      start();
+    }
   }
 
   // ---------- Focus-duration presets ----------
@@ -764,14 +864,21 @@
   }
 
   function selectPreset(key) {
-    if (!PRESETS[key]) return;
+    if (!PRESETS[key] && key !== "stopwatch") return;
     currentPresetKey = key;
     localStorage.setItem(PRESET_KEY, key);
 
     // reset current session to the new focus duration; keep tomato count & study time intact
     running = false;
     mode = "focus";
-    remainingMs = durationForMode(mode);
+    overtimeNotified = false;
+    if (isStopwatchMode()) {
+      swElapsedMs = 0;
+      swSegmentStart = null;
+      remainingMs = 0;
+    } else {
+      remainingMs = durationForMode(mode);
+    }
     endTime = null;
     lastTickTime = null;
 
@@ -782,7 +889,7 @@
   // ---------- Custom focus duration ----------
   var CUSTOM_KEY = "studyTimer_customMinutes";
 
-  // 휴식 시간은 더 이상 프리셋에 저장하지 않는다 - 실제 집중 시간 기반으로 advanceSession에서 계산.
+  // 휴식 시간은 더 이상 프리셋에 저장하지 않는다 - 실제 집중 시간 기반으로 startBreakFromFocus에서 계산.
   function buildCustomPreset(min) {
     return { focus: min };
   }
@@ -840,9 +947,28 @@
       addStudyTime(now - lastTickTime);
     }
     lastTickTime = now;
+
+    if (isStopwatchMode() && mode === "focus") {
+      updateDisplay();
+      return;
+    }
+
     var remaining = endTime - now;
+
+    if (mode === "focus") {
+      // 카운트다운이 0에 도달해도 세션을 넘기지 않는다: 계속 집중 상태를 유지하고
+      // 화면에는 "+MM:SS" 초과 시간을 보여준다. 알림은 세션당 1회만.
+      if (remaining <= 0 && !overtimeNotified) {
+        overtimeNotified = true;
+        notifyOvertime();
+      }
+      updateDisplay();
+      return;
+    }
+
+    // break / longBreak: 0에 도달하면 자동으로 집중을 시작하지 않고 대기 상태로.
     if (remaining <= 0) {
-      advanceSession(true, true); // 자동으로 다음 세션 시작
+      goToFocusWaiting(true);
       return;
     }
     updateDisplay();
@@ -1237,10 +1363,10 @@
     }
 
     var storedPreset = localStorage.getItem(PRESET_KEY);
-    if (storedPreset && PRESETS[storedPreset]) {
+    if (storedPreset && (PRESETS[storedPreset] || storedPreset === "stopwatch")) {
       currentPresetKey = storedPreset;
     }
-    remainingMs = durationForMode(mode);
+    remainingMs = isStopwatchMode() ? 0 : durationForMode(mode);
     updatePresetButtonsUI();
 
     renderStudyTime(getStoredStudyMs());
