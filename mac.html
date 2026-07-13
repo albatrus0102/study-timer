@@ -418,6 +418,39 @@
     min-height: 18px;
     text-align: center;
   }
+
+  /* device sync section */
+  #syncSection {
+    margin-top: 18px;
+  }
+  #syncSection .row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  #syncTokenInput {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    color: rgba(255,255,255,0.85);
+    font-size: 12px;
+    padding: 6px 8px;
+    outline: none;
+    font-family: inherit;
+    min-width: 0;
+  }
+  #syncTokenInput::placeholder { color: rgba(255,255,255,0.25); }
+  #syncStatusRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  #syncStatusText {
+    font-size: 11px;
+    color: rgba(255,255,255,0.4);
+  }
 </style>
 </head>
 <body>
@@ -486,6 +519,18 @@
     <h3>최근 30일</h3>
     <div id="statsHeatmap"></div>
     <div id="statsDayDetail"></div>
+
+    <h3>기기 동기화</h3>
+    <div id="syncSection">
+      <div class="row" id="syncConnectRow">
+        <input id="syncTokenInput" type="password" placeholder="GitHub 토큰 붙여넣기">
+        <button id="syncConnectBtn" class="ctrl-btn" style="opacity:1;">연결</button>
+      </div>
+      <div id="syncStatusRow" style="display:none;">
+        <span id="syncStatusText"></span>
+        <button id="syncDisconnectBtn" class="ctrl-btn">해제</button>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -551,6 +596,12 @@
   var statsWeekChart = document.getElementById("statsWeekChart");
   var statsWeekTotal = document.getElementById("statsWeekTotal");
   var statsHeatmap = document.getElementById("statsHeatmap");
+  var syncTokenInput = document.getElementById("syncTokenInput");
+  var syncConnectBtn = document.getElementById("syncConnectBtn");
+  var syncConnectRow = document.getElementById("syncConnectRow");
+  var syncStatusRow = document.getElementById("syncStatusRow");
+  var syncStatusText = document.getElementById("syncStatusText");
+  var syncDisconnectBtn = document.getElementById("syncDisconnectBtn");
 
   // ---------- Helpers ----------
   function currentPreset() {
@@ -625,8 +676,7 @@
   }
 
   function getStoredStudyMs() {
-    var v = localStorage.getItem("studyTime_" + todayKey());
-    return v ? parseInt(v, 10) || 0 : 0;
+    return totalStudyMsForKey(todayKey());
   }
 
   function addStudyTime(deltaMs) {
@@ -635,7 +685,7 @@
     var current = parseInt(localStorage.getItem(key) || "0", 10) || 0;
     var updated = current + deltaMs;
     localStorage.setItem(key, String(updated));
-    renderStudyTime(updated);
+    renderStudyTime(totalStudyMsForKey(todayKey()));
   }
 
   function formatStudyTime(ms) {
@@ -677,6 +727,304 @@
     document.title = clock + " · " + label;
     startPauseBtn.textContent = isOvertime() ? "휴식 시작" : (running ? "정지" : "시작");
   }
+
+  // ---------- GitHub Sync ----------
+  var GITHUB_OWNER = "albatrus0102";
+  var GITHUB_REPO = "study-stats";
+  var GITHUB_PATH = "stats.json";
+  var GITHUB_BRANCH = "main";
+  var GITHUB_API_URL = "https://api.github.com/repos/" + GITHUB_OWNER + "/" + GITHUB_REPO + "/contents/" + GITHUB_PATH;
+  var TOKEN_KEY = "studyTimer_ghToken";
+  var REMOTE_DEVICES_KEY = "studyTimer_remoteDevices";
+  var DEVICE_ID = "mac";
+  var SYNC_MIN_INTERVAL_MS = 60 * 1000;
+  var SYNC_KEEP_DAYS = 60;
+
+  var syncInProgress = false;
+  var lastSyncAt = null;    // Date.now() of last successful sync
+  var lastSyncError = null; // string | null
+
+  function getGithubToken() {
+    return localStorage.getItem(TOKEN_KEY) || "";
+  }
+
+  function setGithubToken(token) {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  }
+
+  // btoa/atob only handle latin1, so route through encodeURIComponent for unicode safety.
+  function b64EncodeUnicode(str) {
+    return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function (match, p1) {
+      return String.fromCharCode("0x" + p1);
+    }));
+  }
+
+  function b64DecodeUnicode(str) {
+    return decodeURIComponent(atob(str).split("").map(function (c) {
+      return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(""));
+  }
+
+  function getRemoteDevicesCache() {
+    try {
+      var raw = localStorage.getItem(REMOTE_DEVICES_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function setRemoteDevicesCache(devices) {
+    try {
+      localStorage.setItem(REMOTE_DEVICES_KEY, JSON.stringify(devices));
+    } catch (e) {
+      // ignore storage errors silently
+    }
+  }
+
+  // 내 localStorage + 다른 기기들의 원격 캐시(remoteDevices)를 합산한, 특정 날짜의 총 공부 시간(ms).
+  // remoteDevices에는 내 deviceId 섹션을 저장하지 않으므로 이중 계산 걱정 없음.
+  function totalStudyMsForKey(key) {
+    var total = parseInt(localStorage.getItem("studyTime_" + key) || "0", 10) || 0;
+    var remoteDevices = getRemoteDevicesCache();
+    Object.keys(remoteDevices).forEach(function (devId) {
+      if (devId === DEVICE_ID) return;
+      var devData = remoteDevices[devId];
+      if (devData && typeof devData[key] === "number") {
+        total += devData[key];
+      }
+    });
+    return total;
+  }
+
+  function getAllLocalStudyEntries() {
+    var entries = {};
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k && k.indexOf("studyTime_") === 0) {
+        var dateKey = k.slice("studyTime_".length);
+        entries[dateKey] = parseInt(localStorage.getItem(k) || "0", 10) || 0;
+      }
+    }
+    return entries;
+  }
+
+  // dayKey가 "YYYY-MM-DD" 형식(0-padded)이라 문자열 비교가 곧 날짜 비교와 같다.
+  function trimToRecentDays(dataObj, days) {
+    var cutoffKey = dayKeyForOffset(days - 1);
+    var result = {};
+    Object.keys(dataObj).forEach(function (dateKey) {
+      if (dateKey >= cutoffKey) result[dateKey] = dataObj[dateKey];
+    });
+    return result;
+  }
+
+  function fetchRemoteStats(token) {
+    return fetch(GITHUB_API_URL + "?ref=" + GITHUB_BRANCH, {
+      headers: {
+        "Authorization": "Bearer " + token,
+        "Accept": "application/vnd.github+json"
+      }
+    }).then(function (res) {
+      if (res.status === 404) {
+        return { data: { devices: {} }, sha: null };
+      }
+      if (!res.ok) {
+        var err = new Error("GitHub GET failed: " + res.status);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json().then(function (json) {
+        var data;
+        try {
+          data = JSON.parse(b64DecodeUnicode((json.content || "").replace(/\n/g, "")));
+        } catch (e) {
+          data = { devices: {} };
+        }
+        if (!data.devices) data.devices = {};
+        return { data: data, sha: json.sha };
+      });
+    });
+  }
+
+  function putRemoteStats(token, data, sha) {
+    var body = {
+      message: "sync " + DEVICE_ID,
+      content: b64EncodeUnicode(JSON.stringify(data)),
+      branch: GITHUB_BRANCH
+    };
+    if (sha) body.sha = sha;
+    return fetch(GITHUB_API_URL, {
+      method: "PUT",
+      headers: {
+        "Authorization": "Bearer " + token,
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      if (!res.ok) {
+        var err = new Error("GitHub PUT failed: " + res.status);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    });
+  }
+
+  function describeSyncError(err) {
+    if (err && err.status === 401) return "토큰이 유효하지 않아요";
+    if (err && err.status) return "동기화 오류 (" + err.status + ")";
+    return "동기화 오류";
+  }
+
+  // 로컬(내 deviceId)과 원격의 날짜별 값을 max로 병합하고, 변경이 있으면 PUT으로 반영한다.
+  // isRetry: sha 충돌(409/422) 시 한 번만 재시도하기 위한 플래그.
+  function doSyncAttempt(token, isRetry) {
+    fetchRemoteStats(token).then(function (remote) {
+      var remoteData = remote.data;
+      if (!remoteData.devices) remoteData.devices = {};
+
+      var localEntries = getAllLocalStudyEntries();
+      var remoteMine = remoteData.devices[DEVICE_ID] || {};
+
+      var allKeys = {};
+      Object.keys(localEntries).forEach(function (k) { allKeys[k] = true; });
+      Object.keys(remoteMine).forEach(function (k) { allKeys[k] = true; });
+
+      var merged = {};
+      var changed = false;
+      Object.keys(allKeys).forEach(function (k) {
+        var localVal = localEntries[k] || 0;
+        var remoteVal = remoteMine[k] || 0;
+        var maxVal = Math.max(localVal, remoteVal);
+        merged[k] = maxVal;
+        if (maxVal !== localVal) {
+          localStorage.setItem("studyTime_" + k, String(maxVal));
+          changed = true;
+        }
+        if (maxVal !== remoteVal) changed = true;
+      });
+
+      var trimmed = trimToRecentDays(merged, SYNC_KEEP_DAYS);
+      if (Object.keys(trimmed).length !== Object.keys(remoteMine).length) changed = true;
+
+      // cache other devices' sections for totalStudyMsForKey() / stats display
+      var otherDevices = {};
+      Object.keys(remoteData.devices).forEach(function (devId) {
+        if (devId !== DEVICE_ID) otherDevices[devId] = remoteData.devices[devId];
+      });
+      setRemoteDevicesCache(otherDevices);
+
+      renderStudyTime(totalStudyMsForKey(todayKey()));
+
+      if (!changed) {
+        lastSyncAt = Date.now();
+        lastSyncError = null;
+        syncInProgress = false;
+        renderSyncUI();
+        return;
+      }
+
+      remoteData.devices[DEVICE_ID] = trimmed;
+
+      putRemoteStats(token, remoteData, remote.sha).then(function () {
+        lastSyncAt = Date.now();
+        lastSyncError = null;
+        syncInProgress = false;
+        renderSyncUI();
+      }).catch(function (err) {
+        if (!isRetry && err && (err.status === 409 || err.status === 422)) {
+          doSyncAttempt(token, true);
+          return;
+        }
+        lastSyncError = describeSyncError(err);
+        syncInProgress = false;
+        renderSyncUI();
+      });
+    }).catch(function (err) {
+      lastSyncError = describeSyncError(err);
+      syncInProgress = false;
+      renderSyncUI();
+    });
+  }
+
+  // immediate: 60초 스로틀을 건너뛴다 (세션 전환·토큰 연결 직후 등).
+  function syncStats(immediate) {
+    var token = getGithubToken();
+    if (!token) return;
+    if (syncInProgress) return;
+    var now = Date.now();
+    if (!immediate && lastSyncAt && (now - lastSyncAt) < SYNC_MIN_INTERVAL_MS) return;
+    syncInProgress = true;
+    doSyncAttempt(token, false);
+  }
+
+  function formatHHMM(ts) {
+    var d = new Date(ts);
+    var h = String(d.getHours()).padStart(2, "0");
+    var m = String(d.getMinutes()).padStart(2, "0");
+    return h + ":" + m;
+  }
+
+  function renderSyncUI() {
+    var token = getGithubToken();
+    if (!token) {
+      syncConnectRow.style.display = "flex";
+      syncStatusRow.style.display = "none";
+      return;
+    }
+    syncConnectRow.style.display = "none";
+    syncStatusRow.style.display = "flex";
+    if (lastSyncError) {
+      syncStatusText.textContent = lastSyncError;
+    } else if (lastSyncAt) {
+      syncStatusText.textContent = "동기화 켜짐 · 마지막: " + formatHHMM(lastSyncAt);
+    } else {
+      syncStatusText.textContent = "동기화 켜짐 · 동기화 중...";
+    }
+  }
+
+  syncConnectBtn.addEventListener("click", function (e) {
+    var token = syncTokenInput.value.trim();
+    if (token) {
+      setGithubToken(token);
+      syncTokenInput.value = "";
+      lastSyncError = null;
+      lastSyncAt = null;
+      renderSyncUI();
+      syncStats(true);
+    }
+    if (e.target && e.target.blur) e.target.blur();
+  });
+
+  syncTokenInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      syncConnectBtn.click();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+    }
+    e.stopPropagation();
+  });
+
+  syncDisconnectBtn.addEventListener("click", function (e) {
+    setGithubToken(null);
+    lastSyncAt = null;
+    lastSyncError = null;
+    renderSyncUI();
+    if (e.target && e.target.blur) e.target.blur();
+  });
+
+  // triggers: 5분마다(온라인일 때) + 화면 복귀 시
+  setInterval(function () {
+    if (navigator.onLine) syncStats(false);
+  }, 5 * 60 * 1000);
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") syncStats(false);
+  });
 
   // ---------- Notifications ----------
   var NOTIFICATION_TAG = "study-timer-session";
@@ -849,6 +1197,7 @@
       lastTickTime = null;
     }
     updateDisplay();
+    syncStats(true);
   }
 
   // 휴식 → 집중 대기 상태로 전환한다. 자동으로 집중을 시작하지 않고 탭/시작 버튼을 기다린다.
@@ -867,6 +1216,7 @@
     lastTickTime = null;
     if (notify) notifyBreakOver();
     updateDisplay();
+    syncStats(true);
   }
 
   function skip() {
@@ -1128,7 +1478,7 @@
     for (var i = 6; i >= 0; i--) {
       var d = dateForDayOffset(i);
       var key = dayKeyFromDate(d);
-      var ms = parseInt(localStorage.getItem("studyTime_" + key) || "0", 10) || 0;
+      var ms = totalStudyMsForKey(key);
       weekData.push({ ms: ms, weekday: d.getDay(), isToday: i === 0, month: d.getMonth() + 1, day: d.getDate() });
     }
     var maxMs = 0;
@@ -1162,7 +1512,7 @@
     for (var j = 29; j >= 0; j--) {
       var hd = dateForDayOffset(j);
       var hkey = dayKeyFromDate(hd);
-      var hms = parseInt(localStorage.getItem("studyTime_" + hkey) || "0", 10) || 0;
+      var hms = totalStudyMsForKey(hkey);
 
       var lvl = 0;
       if (hms >= 3 * 60 * 60 * 1000) lvl = 3;
@@ -1180,6 +1530,7 @@
   function openStats() {
     renderStatsPanel();
     statsDayDetail.textContent = "막대나 칸을 클릭·호버하면 날짜별 기록이 보여요";
+    renderSyncUI();
     statsDim.classList.add("open");
     statsPanel.classList.add("open");
   }
@@ -1442,6 +1793,9 @@
       localStorage.setItem(MUSIC_URL_KEY, lastUrl);
     }
     musicUrlInput.value = lastUrl;
+
+    renderSyncUI();
+    if (getGithubToken()) syncStats(true);
   }
 
   init();

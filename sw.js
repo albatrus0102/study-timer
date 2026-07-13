@@ -1,7 +1,7 @@
 "use strict";
 
 // 캐시 이름에 버전을 포함해 배포할 때마다 올려주면 구버전 캐시가 자동 정리된다.
-var CACHE_NAME = "pomodoro-v12";
+var CACHE_NAME = "pomodoro-v13";
 var PRECACHE_URLS = ["./", "./index.html", "./icon.png"];
 
 self.addEventListener("install", function (event) {
@@ -35,6 +35,9 @@ self.addEventListener("activate", function (event) {
 // 네트워크 요청이 그냥 실패하고 캐시 응답만 사용된다.
 self.addEventListener("fetch", function (event) {
   if (event.request.method !== "GET") return;
+  // api.github.com 등 다른 오리진 요청은 캐시 대상에서 제외한다 (동기화가 낡은 응답을
+  // 재사용하지 않도록). same-origin 요청만 cache-first 로직을 탄다.
+  if (new URL(event.request.url).origin !== self.location.origin) return;
 
   event.respondWith(
     caches.match(event.request).then(function (cachedResponse) {
