@@ -297,6 +297,14 @@
   .stats-heat-cell.lvl1 { background: rgba(255,255,255,0.16); }
   .stats-heat-cell.lvl2 { background: rgba(255,255,255,0.36); }
   .stats-heat-cell.lvl3 { background: rgba(255,255,255,0.62); }
+
+  #statsDayDetail {
+    margin-top: 12px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.8);
+    min-height: 18px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -342,6 +350,7 @@
     <div id="statsWeekTotal"></div>
     <h3>최근 30일</h3>
     <div id="statsHeatmap"></div>
+    <div id="statsDayDetail"></div>
   </div>
 
 </div>
@@ -956,7 +965,7 @@
       var d = dateForDayOffset(i);
       var key = dayKeyFromDate(d);
       var ms = parseInt(localStorage.getItem("studyTime_" + key) || "0", 10) || 0;
-      weekData.push({ ms: ms, weekday: d.getDay(), isToday: i === 0 });
+      weekData.push({ ms: ms, weekday: d.getDay(), isToday: i === 0, month: d.getMonth() + 1, day: d.getDate() });
     }
     var maxMs = 0;
     weekData.forEach(function (w) { if (w.ms > maxMs) maxMs = w.ms; });
@@ -970,6 +979,7 @@
       var heightPct = maxMs > 0 ? Math.max(2, Math.round((w.ms / maxMs) * 100)) : 2;
       bar.style.height = heightPct + "%";
       bar.title = formatStudyTime(w.ms);
+      col.dataset.detail = w.month + "월 " + w.day + "일 (" + KOREAN_WEEKDAYS[w.weekday] + ") · " + formatStudyTime(w.ms);
 
       var label = document.createElement("div");
       label.className = "stats-bar-label";
@@ -998,12 +1008,14 @@
       var cell = document.createElement("div");
       cell.className = "stats-heat-cell" + (lvl > 0 ? " lvl" + lvl : "");
       cell.title = (hd.getMonth() + 1) + "월 " + hd.getDate() + "일 · " + formatStudyTime(hms);
+      cell.dataset.detail = cell.title;
       statsHeatmap.appendChild(cell);
     }
   }
 
   function openStats() {
     renderStatsPanel();
+    statsDayDetail.textContent = "막대나 칸을 탭하면 날짜별 기록이 보여요";
     statsDim.classList.add("open");
     statsPanel.classList.add("open");
   }
@@ -1021,6 +1033,16 @@
     toggleStats();
     if (e.target && e.target.blur) e.target.blur();
   });
+  var statsDayDetail = document.getElementById("statsDayDetail");
+  function showDayDetail(e) {
+    var t = e.target && e.target.closest ? e.target.closest("[data-detail]") : null;
+    if (t) statsDayDetail.textContent = t.getAttribute("data-detail");
+  }
+  statsWeekChart.addEventListener("mouseover", showDayDetail);
+  statsWeekChart.addEventListener("click", showDayDetail);
+  statsHeatmap.addEventListener("mouseover", showDayDetail);
+  statsHeatmap.addEventListener("click", showDayDetail);
+
   statsDim.addEventListener("click", closeStats);
   statsCloseBtn.addEventListener("click", function (e) {
     closeStats();
