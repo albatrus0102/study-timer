@@ -137,6 +137,25 @@
     pointer-events: none;
   }
 
+  /* tap feedback ripple */
+  .tap-ripple {
+    position: fixed;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.22);
+    transform: translate(-50%, -50%) scale(0.35);
+    pointer-events: none;
+    z-index: 90;
+    animation: tapRipple 0.45s ease-out forwards;
+  }
+  @keyframes tapRipple {
+    to {
+      transform: translate(-50%, -50%) scale(1.7);
+      opacity: 0;
+    }
+  }
+
   /* custom duration panel */
   #customDim {
     position: fixed;
@@ -1213,10 +1232,21 @@
   }
 
   // ---------- Controls ----------
+  // 탭 지점에 은은한 파문 효과 (탭이 인식됐다는 시각 피드백)
+  function showTapRipple(x, y) {
+    var r = document.createElement("div");
+    r.className = "tap-ripple";
+    r.style.left = x + "px";
+    r.style.top = y + "px";
+    document.body.appendChild(r);
+    setTimeout(function () { if (r.parentNode) r.parentNode.removeChild(r); }, 500);
+  }
+
   // 빈 화면 아무 데나 탭하면 시작/정지 (버튼·패널·입력창 터치는 제외)
   document.getElementById("app").addEventListener("click", function (e) {
     var t = e.target;
     if (t.closest && t.closest("button, input, #statsPanel, #customPanel, #statsDim, #customDim, #controls, #presets")) return;
+    showTapRipple(e.clientX, e.clientY);
     togglePause();
   });
 
