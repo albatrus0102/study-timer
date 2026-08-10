@@ -34,9 +34,10 @@ const LM = {
 
 // 0 집중 1 이탈 2 졸음 3 자리비움 4 수면 5 휴식
 // 4·5는 둘 다 집중률 분모에서 빠지지만 서로 다른 사건이라 분리해 센다.
-const STATE = ['집중', '이탈', '졸음', '자리비움', '수면', '휴식'];
-const COLOR = ['#1f6f4a', '#b08a2e', '#c8502f', '#4a4a52', '#3b4a86', '#2a4a55'];
-const EXCLUDED = [4, 5];
+const STATE = ['집중', '이탈', '졸음', '자리비움', '수면', '휴식', '가려짐'];
+const COLOR = ['#1f6f4a', '#b08a2e', '#c8502f', '#4a4a52', '#3b4a86', '#2a4a55', '#5a4a6a'];
+// 분모에서 빼는 상태들. 수면·휴식은 의도한 중단, 가려짐은 잴 수 없었던 구간이다.
+const EXCLUDED = [4, 5, 6];
 
 const DEFAULTS = {
   earFrac: 0.20,      // PERCLOS P80
@@ -128,18 +129,18 @@ function opennessOf(earAdj, cal) {
    실시간과 사후가 같은 step() 을 쓴다. 실시간은 머신을 유지한 채 샘플마다,
    사후는 새 머신으로 전체를 훑는다. 연속 시간은 (샘플수-1)/HZ 로 잰다.
    ══════════════════════════════════════════════════════════════════ */
-function createMachine(cal, opt, sleeps, breaks) {
+function createMachine(cal, opt, sleeps, breaks, hidden) {
   const o = Object.assign({}, DEFAULTS, opt || {});
   const win = Math.round(o.perclosWinSec * HZ);
   return {
-    o, cal, sleeps: sleeps || [], breaks: breaks || [],
+    o, cal, sleeps: sleeps || [], breaks: breaks || [], hidden: hidden || [],
     earThr: cal.earClosed + o.earFrac * (cal.earOpen - cal.earClosed),
     backN: Math.round(o.closedSec * HZ),
     minValid: Math.round(o.perclosMinValidSec * HZ),
     win, ring: new Uint8Array(win), rvalid: new Uint8Array(win),
     rp: 0, sClosed: 0, sValid: 0,
     miss: 0, closedRun: 0, turnRun: 0, micro: false,
-    prev: 0, sp: 0, bp: 0, inX: false,
+    prev: 0, sp: 0, bp: 0, hp: 0, inX: false,
     onEvent: null
   };
 }
@@ -163,9 +164,12 @@ function inRange(list, ptrName, m, i) {
 function step(m, i, ok, ear, faceH, yaw, states) {
   const sleeping = inRange(m.sleeps, 'sp', m, i);
   const resting = !sleeping && inRange(m.breaks, 'bp', m, i);
-  if (sleeping || resting) {
+  // 탭이 가려진 구간은 브라우저가 타이머를 조여서 샘플이 통째로 빈다.
+  // 자리를 비운 것과는 다른 사건이라 따로 세고 분모에서 뺀다.
+  const covered = !sleeping && !resting && inRange(m.hidden, 'hp', m, i);
+  if (sleeping || resting || covered) {
     if (!m.inX) { machReset(m); m.inX = true; }
-    states[i] = sleeping ? 4 : 5;
+    states[i] = sleeping ? 4 : resting ? 5 : 6;
     return states[i];
   }
   m.inX = false;
@@ -192,7 +196,7 @@ function step(m, i, ok, ear, faceH, yaw, states) {
     if (!m.micro) {                       // 백필: 판정이 서는 순간 직전 1.5초를 소급
       m.micro = true;
       for (let j = i - 1; j >= 0 && j > i - 1 - m.backN; j--) {
-        if (states[j] === 4 || states[j] === 5) break;
+        if (states[j] >= 4) break;
         states[j] = 2;
       }
       if (m.onEvent) m.onEvent('drowsy', i);
@@ -209,7 +213,7 @@ function step(m, i, ok, ear, faceH, yaw, states) {
 /** 사후 전체 재판정 (§5.7) — 슬라이더가 호출한다 */
 function rejudge(sess, opt) {
   const st = new Uint8Array(sess.count);
-  const m = createMachine(sess.cal, opt, sess.sleeps, sess.breaks || []);
+  const m = createMachine(sess.cal, opt, sess.sleeps, sess.breaks || [], sess.hidden || []);
   const { ok, ear, faceH, yaw } = sess;
   for (let i = 0; i < sess.count; i++) step(m, i, ok[i], ear[i] / 1000, faceH[i] / 100, yaw[i] / 100, st);
   return st;
@@ -235,9 +239,9 @@ function mergeSegs(segs, gapSec, minSec) {
 }
 /** 집중률 — 수면·휴식 구간은 분모에서 제외 (§6) */
 function stats(states) {
-  const c = [0, 0, 0, 0, 0, 0];
+  const c = [0, 0, 0, 0, 0, 0, 0];
   for (let i = 0; i < states.length; i++) c[states[i]]++;
-  const denom = states.length - c[4] - c[5];
+  const denom = states.length - c[4] - c[5] - c[6];
   return { c, denom, rate: denom > 0 ? c[0] / denom : 0,
            rateRaw: states.length ? c[0] / states.length : 0 };
 }
@@ -314,11 +318,26 @@ const DB = {
     if (this.db || this.dead) return Promise.resolve(this.db);
     return new Promise(res => {
       try {
-        const rq = indexedDB.open('focusTracker', 1);
-        rq.onupgradeneeded = () => {
-          const d = rq.result;
+        // 버전 2 — 1에서 스토어 이름을 sessions/meta → focusSessions/focusMeta 로 바꿨다.
+        // IndexedDB 는 버전이 올라갈 때만 스토어를 만들기 때문에, 이름만 바꾸고 버전을
+        // 안 올리면 기존 DB 를 쓰던 기기에서 스토어가 영영 안 생기고 저장이 조용히 실패한다.
+        const rq = indexedDB.open('focusTracker', 2);
+        rq.onupgradeneeded = ev => {
+          const d = rq.result, tx = rq.transaction;
           if (!d.objectStoreNames.contains('focusSessions')) d.createObjectStore('focusSessions', { keyPath: 'id' });
           if (!d.objectStoreNames.contains('focusMeta')) d.createObjectStore('focusMeta');
+          // v1 시절(단독 focus-tracker.html)에 잰 캘리브레이션을 옮겨온다
+          if (ev.oldVersion < 2 && d.objectStoreNames.contains('meta')) {
+            try {
+              const g = tx.objectStore('meta').get('cal');
+              g.onsuccess = () => {
+                if (g.result) {
+                  tx.objectStore('focusMeta').put(g.result, 'cal');
+                  console.log('[FocusSensor] v1 캘리브레이션을 이관했습니다.');
+                }
+              };
+            } catch (e) { console.warn('[FocusSensor] v1 캘리브레이션 이관 실패', e); }
+          }
         };
         rq.onsuccess = () => { this.db = rq.result; res(this.db); };
         rq.onerror = () => { this.dead = true; console.warn('[FocusSensor] IDB 열기 실패', rq.error); res(null); };
@@ -359,6 +378,30 @@ const DB = {
     } catch (e) { return []; }
   }
 };
+
+/* 캘리브레이션은 두 곳에 저장한다. 65초를 다시 재는 건 성가신 일이라
+   IndexedDB 하나에 맡기지 않고 localStorage 를 예비로 둔다.
+   (IDB 는 저장소 정리·프라이빗 모드·용량 초과로 통째로 죽는 경우가 있다) */
+const CAL_LS_KEY = 'focusSensor_cal';
+async function saveCal(cal) {
+  let ok = await DB.put('focusMeta', cal, 'cal');
+  try { localStorage.setItem(CAL_LS_KEY, JSON.stringify(cal)); ok = true; } catch (e) {}
+  return ok;
+}
+async function loadCal() {
+  const c = await DB.get('focusMeta', 'cal');
+  if (c) return c;
+  try {
+    const t = localStorage.getItem(CAL_LS_KEY);
+    if (t) {
+      const parsed = JSON.parse(t);
+      DB.put('focusMeta', parsed, 'cal');       // IDB 가 살아났으면 되돌려 놓는다
+      console.log('[FocusSensor] localStorage 예비본에서 캘리브레이션을 복구했습니다.');
+      return parsed;
+    }
+  } catch (e) {}
+  return null;
+}
 
 /* ══════════════════════════════════════════════════════════════════
    센서 본체
@@ -587,7 +630,7 @@ function newSession(cal) {
   return {
     id: 'S' + Date.now(), startedAt: Date.now(), endedAt: 0, hz: HZ, count: 0, cal,
     _ok: new Buf(), _ear: new Buf(), _faceH: new Buf(), _yaw: new Buf(), _mar: new Buf(),
-    sleeps: [], breaks: [], gaps: [], shots: [], yawns: 0,
+    sleeps: [], breaks: [], hidden: [], gaps: [], shots: [], yawns: 0,
     get ok() { return this._ok.a; }, get ear() { return this._ear.a; },
     get faceH() { return this._faceH.a; }, get yaw() { return this._yaw.a; }, get mar() { return this._mar.a; }
   };
@@ -641,8 +684,16 @@ function onDrowsyOnset(i) {
 }
 
 function onVis() {
-  if (document.hidden) { if (sess) sess.gaps.push(sess.count); }
-  else requestWake();
+  if (!sess) return;
+  if (document.hidden) {
+    sess.gaps.push(sess.count);
+    sess.hidden.push([sess.count, 1e12]);
+  } else {
+    const h = sess.hidden[sess.hidden.length - 1];
+    if (h && h[1] === 1e12) h[1] = Math.max(h[0], sess.count - 1);
+    if (mach) { machReset(mach); mach.hp = 0; }   // 가려진 동안의 잔여 상태는 못 믿는다
+    requestWake();
+  }
 }
 async function requestWake() {
   try {
@@ -693,7 +744,8 @@ function exportSession(s) {
   return {
     id: s.id, startedAt: s.startedAt, endedAt: s.endedAt, hz: s.hz, count: s.count, cal: s.cal,
     ok: s._ok.slice(), ear: s._ear.slice(), faceH: s._faceH.slice(), yaw: s._yaw.slice(), mar: s._mar.slice(),
-    sleeps: fix(s.sleeps), breaks: fix(s.breaks), gaps: s.gaps.slice(), shots: s.shots.slice(), yawns: s.yawns
+    sleeps: fix(s.sleeps), breaks: fix(s.breaks), hidden: fix(s.hidden),
+    gaps: s.gaps.slice(), shots: s.shots.slice(), yawns: s.yawns
   };
 }
 async function snapshot() { if (sess) await DB.put('focusSessions', exportSession(sess)); }
@@ -709,6 +761,8 @@ async function stop() {
     if (s) s[1] = sess.count - 1;
     paused = false; pauseKind = null;
   }
+  const oh = sess.hidden[sess.hidden.length - 1];
+  if (oh && oh[1] === 1e12) oh[1] = Math.max(oh[0], sess.count - 1);
   if (stream) stream.getVideoTracks().forEach(t => t.stop());
   try { if (wakeLock) await wakeLock.release(); } catch (e) {}
   wakeLock = null;
@@ -758,13 +812,13 @@ function drawTape(c, states) {
   const g = c.getContext('2d'), W = c.width, H = c.height, n = states.length;
   g.fillStyle = '#101216'; g.fillRect(0, 0, W, H);
   if (!n) return;
-  const per = n / W, cnt = new Int32Array(6);
+  const per = n / W, cnt = new Int32Array(7);
   for (let x = 0; x < W; x++) {
     const a = Math.floor(x * per), b = Math.min(n, Math.floor((x + 1) * per) + (per < 1 ? 1 : 0));
     cnt.fill(0);
     for (let i = a; i < b; i++) cnt[states[i]]++;
     let pick = 0, mx = -1;
-    for (let k = 0; k < 6; k++) if (cnt[k] > mx) { mx = cnt[k]; pick = k; }
+    for (let k = 0; k < 7; k++) if (cnt[k] > mx) { mx = cnt[k]; pick = k; }
     if (cnt[2] > 0) pick = 2;              // 놓치면 안 되는 정보
     g.fillStyle = COLOR[pick]; g.fillRect(x, 0, 1, H);
   }
@@ -800,7 +854,7 @@ function drawBars(c, states) {
 
 /* 최근 N분 스트립 — 세로 높이는 눈 열린 정도, 배경색은 그 순간 판정.
    10시간 동안 곁눈질로 보게 되는 유일한 요소라 화면의 주인공이다 (§9). */
-const STRIP_PRIO = [5, 4, 3, 1, 2];        // 뒤로 갈수록 셈. 졸음이 가장 세다
+const STRIP_PRIO = [6, 5, 4, 3, 1, 2];        // 뒤로 갈수록 셈. 졸음이 가장 세다
 function drawStrip(c, s, states, o, spanSec) {
   const g = c.getContext('2d'); if (!g) return;
   const W = c.width, H = c.height, n = s.count;
@@ -975,9 +1029,10 @@ function report(s, el) {
     q('fsMeta').textContent = `${new Date(s.startedAt).toLocaleString('ko-KR')} · ${hms(s.count / HZ)} · ` +
       `${s.count.toLocaleString()}샘플 @${HZ}Hz · 재판정 ${ms.toFixed(0)}ms`;
     let w = '';
-    if (s.gaps.length) w += `<div class="warn">탭이 가려진 시점이 ${s.gaps.length}회 있습니다 (` +
-      s.gaps.slice(0, 8).map(i => hms(sec(i))).join(', ') + (s.gaps.length > 8 ? ' …' : '') +
-      `). 해당 구간 수치는 신뢰할 수 없습니다.</div>`;
+    if (r.c[6]) w += `<div class="warn">탭이 가려져 잴 수 없었던 시간이 ${hms(sec(r.c[6]))} 있습니다 ` +
+      `(${s.gaps.length}회). 브라우저가 가려진 탭의 타이머를 분당 1회로 조이기 때문에 그 구간은 ` +
+      `표본이 없습니다. <b>자리비움으로 세지 않고 집중률 분모에서 빼</b> 두었으니, 이 시간이 길면 ` +
+      `집중률은 “잰 시간 안에서의 비율”로만 읽으세요.</div>`;
     if (s.cal.warn) w += `<div class="warn">${s.cal.warn}</div>`;
     q('fsWarn').innerHTML = w;
 
@@ -986,7 +1041,7 @@ function report(s, el) {
       (s.cal.earClosed + o.earFrac * (s.cal.earOpen - s.cal.earClosed)).toFixed(3);
     q('fsKv').innerHTML = [['집중', hms(sec(r.c[0]))], ['졸음', hms(sec(r.c[2]))], ['이탈', hms(sec(r.c[1]))],
       ['자리비움', hms(sec(r.c[3]))], ['수면', hms(sec(r.c[4]))], ['휴식', hms(sec(r.c[5]))],
-      ['하품', s.yawns + '회']].map(([k, v]) => `<div><b>${k}</b><span>${v}</span></div>`).join('');
+      ['가려짐', hms(sec(r.c[6]))], ['하품', s.yawns + '회']].map(([k, v]) => `<div><b>${k}</b><span>${v}</span></div>`).join('');
 
     drawTape(q('fsTape'), states);
     drawBars(q('fsBars'), states);
@@ -1136,6 +1191,23 @@ function runTests() {
     let diff = 0; for (let i = 0; i < n; i++) if (batch[i] !== live[i]) diff++;
     T(10, '실시간 누적 상태기 == 사후 재판정', diff === 0, `불일치 ${diff}개 / ${n}`); }
 
+  // 탭 가려짐은 자리비움이 아니라 "잴 수 없었던 시간"이다. 분모에서 빠져야 한다.
+  { const n = 30 * 60 * HZ, a = 10 * 60 * HZ, b = a + 5 * 60 * HZ - 1;
+    const s = synth(n, i => (i >= a && i <= b) ? { ok: 0 } : { ear: OPEN }, cal);
+    s.hidden = [[a, b]];
+    const st = rejudge(s, {}), r = stats(st);
+    T(12, '탭 가려짐 5분 — 자리비움이 아니라 분모에서 제외',
+      Math.abs(secOf(st, 6) - 300) < 0.05 && secOf(st, 3) === 0 && r.rate > 0.99,
+      `가려짐 ${secOf(st,6)}초 / 자리비움 ${secOf(st,3)}초 (기대 0) / 집중률 ${(r.rate*100).toFixed(1)}%`); }
+
+  // 같은 구간을 가려짐으로 표시하지 않으면 자리비움으로 잡혀 집중률이 깎인다 (회귀 방지)
+  { const n = 30 * 60 * HZ, a = 10 * 60 * HZ, b = a + 5 * 60 * HZ - 1;
+    const s = synth(n, i => (i >= a && i <= b) ? { ok: 0 } : { ear: OPEN }, cal);
+    const r = stats(rejudge(s, {}));
+    T('12b', '표시가 없으면 같은 구간이 자리비움으로 잡히는지 (대조군)',
+      r.c[3] > 0 && r.rate < 0.9,
+      `자리비움 ${(r.c[3]/HZ).toFixed(0)}초 / 집중률 ${(r.rate*100).toFixed(1)}%`); }
+
   // 휴식 구간도 수면과 똑같이 분모에서 빠져야 한다 (타이머 통합용)
   { const n = 30 * 60 * HZ, a = 10 * 60 * HZ, b = a + 5 * 60 * HZ - 1;
     const s = synth(n, i => (i >= a && i <= b) ? { ok: 0 } : { ear: OPEN }, cal);
@@ -1171,6 +1243,7 @@ global.FocusSensor = {
     }
     return n;
   },
+  saveCal, loadCal,
   detectNow, rejudge, stats, segments, mergeSegs, earAdjust, opennessOf,
   hms, durTxt, clockAt, drawTape, drawBars, drawStrip, runTests, synth,
   sound: Sound, db: DB, showPreview

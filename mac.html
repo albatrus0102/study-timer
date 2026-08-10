@@ -2103,7 +2103,7 @@
     renderFocusPanel();
     focusReady = await FS().init(focusCk);
     if (focusReady) {
-      var saved = await FS().db.get("focusMeta", "cal");
+      var saved = await FS().loadCal();
       if (saved) focusCal = saved;
     }
     renderFocusPanel();
@@ -2135,13 +2135,20 @@
       g("fcFh").textContent = p.m ? p.m.faceH.toFixed(2) : "—";
     });
     focusCalibrating = false;
+    var saveFailed = false;
     if (r.cal) {
       focusCal = r.cal;
-      await FS().db.put("focusMeta", focusCal, "cal");
+      // 저장이 실패해도 이번 세션은 메모리 값으로 돌아간다. 다만 조용히 넘어가면
+      // 다음에 열었을 때 "다시 측정하라"는 말만 보게 되므로 실패를 화면에 남긴다.
+      saveFailed = !(await FS().saveCal(focusCal));
     }
     renderFocusPanel();
     if (r.error) {
       focusBody.insertAdjacentHTML("afterbegin", '<div class="fwarn">' + r.error + '</div>');
+    } else if (saveFailed) {
+      focusBody.insertAdjacentHTML("afterbegin", '<div class="fwarn">캘리브레이션은 잘 됐지만 ' +
+        '저장에 실패했습니다. 이번 세션은 그대로 쓸 수 있지만 창을 닫으면 사라집니다. ' +
+        '(브라우저 저장소가 막혀 있거나 용량이 꽉 찬 경우)</div>');
     }
   }
 
