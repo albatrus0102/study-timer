@@ -370,6 +370,11 @@ let t0 = 0, timer = null, snapTimer = null;
 let onStateCb = null, onTickCb = null;
 let lastVideoTime = -1, lastMet = null;
 let wakeLock = null, lastAlert = -1e9, yawnRun = 0, shotCanvas = null;
+// 카메라를 새로 열면 자동 노출·화이트밸런스가 잡힐 때까지 1~2초간 화면이 흔들린다.
+// 그 구간의 랜드마크는 못 믿으므로 얼굴 소실(ok=0)로 기록해 판정에서 뺀다.
+// 휴식에서 돌아올 때마다 카메라를 다시 열기 때문에 매번 적용된다.
+const CAM_WARMUP_MS = 2000;
+let camWarmUntil = 0;
 let opts = Object.assign({}, DEFAULTS);
 let checkCb = null;
 
@@ -494,6 +499,7 @@ async function openCamera() {
     await new Promise(res => { if (video.videoWidth) return res();
       video.onloadedmetadata = res; setTimeout(res, 4000); });
     lastVideoTime = -1; lastMet = null;
+    camWarmUntil = performance.now() + CAM_WARMUP_MS;
     const tr = stream.getVideoTracks()[0];
     ck('perm', 'ok', `${video.videoWidth}×${video.videoHeight} · ${tr ? tr.label : ''}`);
     return true;
@@ -604,7 +610,7 @@ function tick() {
     const due = t0 + sess.count * SAMPLE_MS;
     const fresh = (now - due) < SAMPLE_MS * 1.5;
     let i;
-    if (paused || !fresh) {
+    if (paused || !fresh || now < camWarmUntil) {
       // 수면·휴식 중이거나 탭이 가려져 놓친 구간 — 인덱스는 계속 증가시켜 시간축을 유지 (§6)
       i = pushSample(0, 0, 0, 0, 0);
     } else {
@@ -822,6 +828,61 @@ function drawStrip(c, s, states, o, spanSec) {
   }
 }
 
+/* 고개 방향 분포 — 실제로 자습하는 동안 yaw 가 어디에 몰려 있는지 보여준다.
+   캘리브레이션 정면 기준(C단계)과 실제 자습 자세가 어긋나 있으면 여기서 바로 드러난다. */
+function drawYawHist(c, s, o) {
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  c.width = Math.max(1, Math.round(c.getBoundingClientRect().width * dpr));
+  c.height = Math.round(110 * dpr);
+  const g = c.getContext('2d'), W = c.width, H = c.height;
+  g.fillStyle = '#101216'; g.fillRect(0, 0, W, H);
+  const LO = -1.2, HI = 1.2, NB = 96, bins = new Int32Array(NB);
+  let total = 0;
+  for (let i = 0; i < s.count; i++) {
+    if (!s.ok[i]) continue;
+    const v = clamp(s.yaw[i] / 100, LO, HI);
+    bins[Math.min(NB - 1, Math.floor((v - LO) / (HI - LO) * NB))]++;
+    total++;
+  }
+  if (!total) return;
+  let mx = 0; for (let k = 0; k < NB; k++) if (bins[k] > mx) mx = bins[k];
+  const xOf = v => (clamp(v, LO, HI) - LO) / (HI - LO) * W;
+  const bw = W / NB;
+  const lo = s.cal.yawLog - o.yawThr, hi = s.cal.yawLog + o.yawThr;
+  g.fillStyle = 'rgba(31,111,74,0.22)';                     // 집중으로 인정되는 폭
+  g.fillRect(xOf(lo), 0, xOf(hi) - xOf(lo), H - 14);
+  for (let k = 0; k < NB; k++) {
+    if (!bins[k]) continue;
+    const v = LO + (k + 0.5) / NB * (HI - LO);
+    const h = bins[k] / mx * (H - 20);
+    g.fillStyle = (v >= lo && v <= hi) ? COLOR[0] : COLOR[1];
+    g.fillRect(k * bw, H - 14 - h, Math.max(1, bw - 1), h);
+  }
+  g.strokeStyle = '#e8e8ea'; g.lineWidth = Math.max(1, dpr);  // 캘리브레이션 정면 기준
+  g.beginPath(); g.moveTo(xOf(s.cal.yawLog), 0); g.lineTo(xOf(s.cal.yawLog), H - 14); g.stroke();
+  g.fillStyle = '#7a7a84'; g.font = `${Math.round(9 * dpr)}px system-ui`;
+  g.textAlign = 'left';   g.fillText('← 왼쪽', 4, H - 4);
+  g.textAlign = 'center'; g.fillText('정면 기준', xOf(s.cal.yawLog), H - 4);
+  g.textAlign = 'right';  g.fillText('오른쪽 →', W - 4, H - 4);
+}
+function yawNote(s, o) {
+  const vals = [];
+  for (let i = 0; i < s.count; i++) if (s.ok[i]) vals.push(s.yaw[i] / 100);
+  if (!vals.length) return '얼굴을 잡은 샘플이 없습니다.';
+  const med = median(vals), off = med - s.cal.yawLog;
+  let out = 0;
+  for (const v of vals) if (Math.abs(v - s.cal.yawLog) > o.yawThr) out++;
+  const ratio = out / vals.length;
+  let msg = `실제 자습 중 고개 중앙값 ${med.toFixed(2)} · 캘리브레이션 정면 기준 ${s.cal.yawLog.toFixed(2)} · ` +
+            `어긋남 ${off >= 0 ? '+' : ''}${off.toFixed(2)} · 판정 폭 밖 ${(ratio * 100).toFixed(1)}%`;
+  if (Math.abs(off) > o.yawThr * 0.5) {
+    msg += `<br><b>기준이 실제 자습 자세와 많이 어긋나 있습니다.</b> 캘리브레이션 C단계(고개 들고 정면)로 잰 기준이라, ` +
+      `노트를 보며 고개가 돌아간 채 공부하면 그 자세 전체가 이탈 쪽으로 밀립니다. ` +
+      `판정 폭을 ${(Math.abs(off) + 0.3).toFixed(2)} 이상으로 올리면 사라집니다.`;
+  }
+  return msg;
+}
+
 const REPORT_CSS = `
 .fsr{color:#e8e8ea;font-size:14px}
 .fsr h4{font-size:14px;font-weight:600;margin:22px 0 9px;color:#e8e8ea}
@@ -867,6 +928,9 @@ function report(s, el) {
     <canvas id="fsBars" style="height:150px"></canvas>
     <h4>수면 · 휴식 구간</h4><div id="fsRest"></div>
     <h4>졸음 구간</h4><div id="fsDrowsy"></div>
+    <h4>이탈 구간</h4><div id="fsAway"></div>
+    <h4>고개 방향 분포</h4><canvas id="fsYaw" style="height:110px"></canvas>
+    <div class="note" id="fsYawNote"></div>
     <h4>임계값 조정 — 재측정 없이 즉시 재판정</h4>
     <div id="fsSliders"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
@@ -886,7 +950,8 @@ function report(s, el) {
 
   const SL = [['earFrac', '눈 감김 판정선', 0.10, 0.60, 0.01],
               ['perclos', 'PERCLOS 임계', 0.05, 0.40, 0.01],
-              ['headComp', '고개 숙임 보정', 0, 1, 0.05]];
+              ['headComp', '고개 숙임 보정', 0, 1, 0.05],
+              ['yawThr', '이탈 판정 폭', 0.15, 1.20, 0.05]];
   q('fsSliders').innerHTML = SL.map(([k, n, mn, mx, st]) =>
     `<div class="sld"><span>${n}</span>
       <input type="range" id="fsl_${k}" min="${mn}" max="${mx}" step="${st}" value="${o[k]}">
@@ -947,6 +1012,28 @@ function report(s, el) {
           <td>${n ? (sum/n*100).toFixed(0)+'%' : '—'}</td>
           <td class="shots">${shots.map(h => `<img src="${h.img}">`).join('')}</td></tr>`;
       }).join('') + `</table>` : '<div class="note">없음</div>';
+
+    // 이탈 구간 — 언제, 얼마나 돌아갔는지. 오탐이면 여기 편차가 임계선 언저리에 몰려 있다.
+    const aw = mergeSegs(segments(states, 1), 5, 1.0);
+    q('fsAway').innerHTML = aw.length ? `<table>
+      <tr><th>시각</th><th>세션 경과</th><th>길이</th><th>평균 고개 편차</th><th>최대</th></tr>` +
+      aw.map(x => {
+        let sum = 0, n = 0, mx = 0;
+        for (let i = x[0]; i <= x[1]; i++) if (s.ok[i]) {
+          const dv = Math.abs(s.yaw[i] / 100 - s.cal.yawLog);
+          sum += dv; n++; if (dv > mx) mx = dv;
+        }
+        return `<tr><td>${clockAt(s.startedAt + x[0] * SAMPLE_MS)}</td><td>${hms(x[0] / HZ)}</td>
+          <td>${durTxt((x[1]-x[0]+1)/HZ)}</td>
+          <td>${n ? (sum / n).toFixed(2) : '—'}</td>
+          <td>${n ? mx.toFixed(2) : '—'}</td></tr>`;
+      }).join('') + `</table>
+      <div class="note">판정 폭 ${o.yawThr.toFixed(2)} 를 넘긴 구간입니다. 편차가 판정 폭 바로 위에 몰려 있으면
+      정면 기준(캘리브레이션 C단계)이 실제 자습 자세와 어긋난 것이라 폭을 넓히면 사라집니다.</div>`
+      : '<div class="note">없음</div>';
+
+    drawYawHist(q('fsYaw'), s, o);
+    q('fsYawNote').innerHTML = yawNote(s, o);
   }
   paint();
 }
