@@ -1951,6 +1951,12 @@
       if (!focusReady) { focusChipText.textContent = "측정 준비 안 됨"; focusChip.firstElementChild.style.background = "#5a5a64"; return; }
       if (!fs || !fs.running) { focusChipText.textContent = "대기"; focusChip.firstElementChild.style.background = "#5a5a64"; return; }
       if (fs.paused) { focusChipText.textContent = "휴식"; focusChip.firstElementChild.style.background = fs.COLOR[5]; return; }
+      var h = fs.health;
+      if (!h.ok || h.wakeLost) {
+        focusChipText.textContent = h.ok ? "화면 꺼짐 방지 풀림" : h.reason;
+        focusChip.firstElementChild.style.background = fs.COLOR[2];
+        return;
+      }
       var s = sess || fs.session, st = states || fs.states;
       if (!s || !s.count) { focusChipText.textContent = "측정 중"; return; }
       var cur = st[s.count - 1];

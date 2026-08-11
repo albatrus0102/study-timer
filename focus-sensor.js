@@ -34,7 +34,7 @@ const LM = {
 
 // 0 집중 1 이탈 2 졸음 3 자리비움 4 수면 5 휴식
 // 4·5는 둘 다 집중률 분모에서 빠지지만 서로 다른 사건이라 분리해 센다.
-const STATE = ['집중', '이탈', '졸음', '자리비움', '수면', '휴식', '가려짐'];
+const STATE = ['집중', '이탈', '졸음', '자리비움', '수면', '휴식', '측정 불가'];
 const COLOR = ['#1f6f4a', '#b08a2e', '#c8502f', '#4a4a52', '#3b4a86', '#2a4a55', '#5a4a6a'];
 // 분모에서 빼는 상태들. 수면·휴식은 의도한 중단, 가려짐은 잴 수 없었던 구간이다.
 const EXCLUDED = [4, 5, 6];
@@ -129,18 +129,18 @@ function opennessOf(earAdj, cal) {
    실시간과 사후가 같은 step() 을 쓴다. 실시간은 머신을 유지한 채 샘플마다,
    사후는 새 머신으로 전체를 훑는다. 연속 시간은 (샘플수-1)/HZ 로 잰다.
    ══════════════════════════════════════════════════════════════════ */
-function createMachine(cal, opt, sleeps, breaks, hidden) {
+function createMachine(cal, opt, sleeps, breaks, hidden, camDown) {
   const o = Object.assign({}, DEFAULTS, opt || {});
   const win = Math.round(o.perclosWinSec * HZ);
   return {
-    o, cal, sleeps: sleeps || [], breaks: breaks || [], hidden: hidden || [],
+    o, cal, sleeps: sleeps || [], breaks: breaks || [], hidden: hidden || [], camDown: camDown || [],
     earThr: cal.earClosed + o.earFrac * (cal.earOpen - cal.earClosed),
     backN: Math.round(o.closedSec * HZ),
     minValid: Math.round(o.perclosMinValidSec * HZ),
     win, ring: new Uint8Array(win), rvalid: new Uint8Array(win),
     rp: 0, sClosed: 0, sValid: 0,
     miss: 0, closedRun: 0, turnRun: 0, micro: false,
-    prev: 0, sp: 0, bp: 0, hp: 0, inX: false,
+    prev: 0, sp: 0, bp: 0, hp: 0, cp: 0, inX: false,
     onEvent: null
   };
 }
@@ -166,7 +166,8 @@ function step(m, i, ok, ear, faceH, yaw, states) {
   const resting = !sleeping && inRange(m.breaks, 'bp', m, i);
   // 탭이 가려진 구간은 브라우저가 타이머를 조여서 샘플이 통째로 빈다.
   // 자리를 비운 것과는 다른 사건이라 따로 세고 분모에서 뺀다.
-  const covered = !sleeping && !resting && inRange(m.hidden, 'hp', m, i);
+  const covered = !sleeping && !resting &&
+    (inRange(m.hidden, 'hp', m, i) || inRange(m.camDown, 'cp', m, i));
   if (sleeping || resting || covered) {
     if (!m.inX) { machReset(m); m.inX = true; }
     states[i] = sleeping ? 4 : resting ? 5 : 6;
@@ -213,7 +214,7 @@ function step(m, i, ok, ear, faceH, yaw, states) {
 /** 사후 전체 재판정 (§5.7) — 슬라이더가 호출한다 */
 function rejudge(sess, opt) {
   const st = new Uint8Array(sess.count);
-  const m = createMachine(sess.cal, opt, sess.sleeps, sess.breaks || [], sess.hidden || []);
+  const m = createMachine(sess.cal, opt, sess.sleeps, sess.breaks || [], sess.hidden || [], sess.camDown || []);
   const { ok, ear, faceH, yaw } = sess;
   for (let i = 0; i < sess.count; i++) step(m, i, ok[i], ear[i] / 1000, faceH[i] / 100, yaw[i] / 100, st);
   return st;
@@ -418,6 +419,21 @@ let wakeLock = null, lastAlert = -1e9, yawnRun = 0, shotCanvas = null;
 // 휴식에서 돌아올 때마다 카메라를 다시 열기 때문에 매번 적용된다.
 const CAM_WARMUP_MS = 2000;
 let camWarmUntil = 0;
+
+// 카메라는 10시간 사이에 조용히 죽는다. 다른 앱이 뺏거나, 연속성 카메라가 끼어들거나,
+// 시스템이 절전에서 파이프라인을 재시작하거나. 감지하지 않으면 판정기는 그걸 그냥
+// "얼굴 소실 → 자리비움"으로 적고, 프레임이 얼면 마지막 지표를 되풀이해서
+// 고장을 "꾸준한 집중"으로 둔갑시킨다. 둘 다 조용히 틀린 데이터가 되므로 막는다.
+const FREEZE_MS = 1500;        // 이만큼 같은 프레임이면 얼었다고 본다
+const REOPEN_EVERY_MS = 5000;  // 복구 재시도 간격
+let lastFrameAt = 0, camFail = null, lastReopen = 0, reopening = false;
+const health = { ok: true, reason: null, since: 0 };
+function setHealth(ok, reason) {
+  if (health.ok === ok && health.reason === reason) return;
+  health.ok = ok; health.reason = reason; health.since = Date.now();
+  if (!ok) console.warn('[FocusSensor] 측정 불가:', reason);
+  else console.log('[FocusSensor] 측정 정상 복귀');
+}
 let opts = Object.assign({}, DEFAULTS);
 let checkCb = null;
 
@@ -542,8 +558,16 @@ async function openCamera() {
     await new Promise(res => { if (video.videoWidth) return res();
       video.onloadedmetadata = res; setTimeout(res, 4000); });
     lastVideoTime = -1; lastMet = null;
+    lastFrameAt = performance.now();
     camWarmUntil = performance.now() + CAM_WARMUP_MS;
+    camFail = null; setHealth(true, null);
     const tr = stream.getVideoTracks()[0];
+    if (tr) {
+      // 트랙이 끝나면(다른 앱이 뺏김 등) 브라우저가 알려준다. 이걸 놓치면 무한 자리비움이 된다.
+      tr.addEventListener('ended', () => {
+        if (running && !paused) { camFail = '카메라 연결이 끊겼습니다'; setHealth(false, camFail); }
+      });
+    }
     ck('perm', 'ok', `${video.videoWidth}×${video.videoHeight} · ${tr ? tr.label : ''}`);
     return true;
   } catch (e) {
@@ -557,8 +581,19 @@ async function openCamera() {
 /** 프레임 1회 추론. 영상은 저장하지 않고 지표만 남긴다. */
 function detectNow() {
   if (!landmarker || !video || !video.videoWidth) return null;
-  if (video.currentTime === lastVideoTime) return lastMet;   // 같은 프레임이면 재사용
+  if (video.currentTime === lastVideoTime) {
+    // 같은 프레임 재사용은 10Hz 샘플링 / 15fps 카메라라 정상이다. 다만 몇 초씩
+    // 안 바뀌면 화면이 언 것이므로, 낡은 지표를 되풀이하지 않고 소실로 처리한다.
+    if (performance.now() - lastFrameAt > FREEZE_MS) {
+      camFail = '카메라 화면이 멈췄습니다';
+      setHealth(false, camFail);
+      return null;
+    }
+    return lastMet;
+  }
   lastVideoTime = video.currentTime;
+  lastFrameAt = performance.now();
+  if (camFail) { camFail = null; setHealth(true, null); }
   let res;
   try { res = landmarker.detectForVideo(video, performance.now()); } catch (e) { return null; }
   const lm = res && res.faceLandmarks && res.faceLandmarks[0];
@@ -630,7 +665,7 @@ function newSession(cal) {
   return {
     id: 'S' + Date.now(), startedAt: Date.now(), endedAt: 0, hz: HZ, count: 0, cal,
     _ok: new Buf(), _ear: new Buf(), _faceH: new Buf(), _yaw: new Buf(), _mar: new Buf(),
-    sleeps: [], breaks: [], hidden: [], gaps: [], shots: [], yawns: 0,
+    sleeps: [], breaks: [], hidden: [], camDown: [], gaps: [], shots: [], yawns: 0,
     get ok() { return this._ok.a; }, get ear() { return this._ear.a; },
     get faceH() { return this._faceH.a; }, get yaw() { return this._yaw.a; }, get mar() { return this._mar.a; }
   };
@@ -665,10 +700,36 @@ function tick() {
         else yawnRun = 0;
       } else { i = pushSample(0, 0, 0, 0, 0); yawnRun = 0; }
     }
+    // 카메라가 죽어 있는 동안은 "측정 불가"로 표시한다. 자리비움과 섞이면
+    // 앉아서 공부한 시간이 통째로 이탈로 둔갑한다.
+    const open = sess.camDown[sess.camDown.length - 1];
+    if (!health.ok && !paused) {
+      if (!open || open[1] !== 1e12) sess.camDown.push([i, 1e12]);
+    } else if (open && open[1] === 1e12) {
+      open[1] = Math.max(open[0], i - 1);
+    }
     if (onStateCb) onStateCb(stateBuf[i], i, sess);
   }
+  maintain();
   if (onTickCb) onTickCb(sess, stateBuf);
   timer = setTimeout(tick, Math.max(2, t0 + sess.count * SAMPLE_MS - performance.now()));
+}
+
+/** 주기 점검 — 카메라 복구와 Wake Lock 재획득. 10시간 방치가 전제라
+    "한 번 걸어두고 잊는" 방식은 쓸 수 없다. */
+function maintain() {
+  const now = performance.now();
+  if (!health.ok && !paused && !reopening && now - lastReopen > REOPEN_EVERY_MS) {
+    lastReopen = now; reopening = true;
+    if (stream) { try { stream.getVideoTracks().forEach(t => t.stop()); } catch (e) {} }
+    openCamera().finally(() => { reopening = false; });
+  }
+  // Wake Lock 은 저전력 모드·배터리 부족으로 화면이 켜진 채로도 풀린다.
+  // 사양서 §1 이 지목한 "실패해도 경고가 없어 10시간이 날아가는" 구멍이 여기다.
+  if (!paused && now - lastWakeCheck > WAKE_CHECK_MS) {
+    lastWakeCheck = now;
+    if (!wakeLock) requestWake();
+  }
 }
 
 function onDrowsyOnset(i) {
@@ -695,13 +756,24 @@ function onVis() {
     requestWake();
   }
 }
+const WAKE_CHECK_MS = 30000;
+let lastWakeCheck = 0, wakeSupported = ('wakeLock' in navigator), wakeLost = false;
 async function requestWake() {
+  if (!wakeSupported) return;
   try {
-    if ('wakeLock' in navigator && !wakeLock) {
+    if (!wakeLock) {
       wakeLock = await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release', () => { wakeLock = null; });
+      wakeLost = false;
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+        // 화면이 잠들면 브라우저가 타이머를 분당 1회로 조인다. 조용히 넘기면 안 된다.
+        if (running && !paused) { wakeLost = true; console.warn('[FocusSensor] WakeLock 해제됨 — 재획득 시도'); }
+      });
     }
-  } catch (e) { console.warn('[FocusSensor] WakeLock 실패', e); }
+  } catch (e) {
+    wakeLost = true;
+    console.warn('[FocusSensor] WakeLock 실패', e);
+  }
 }
 
 async function start(cal, cbState, cbTick) {
@@ -709,7 +781,7 @@ async function start(cal, cbState, cbTick) {
   if (running) return sess;
   sess = newSession(cal);
   stateBuf = new Uint8Array(16384);
-  mach = createMachine(cal, opts, sess.sleeps, sess.breaks);
+  mach = createMachine(cal, opts, sess.sleeps, sess.breaks, sess.hidden, sess.camDown);
   mach.onEvent = (type, i) => { if (type === 'drowsy') onDrowsyOnset(i); };
   onStateCb = cbState || null; onTickCb = cbTick || null;
   running = true; paused = false; pauseKind = null;
@@ -744,7 +816,7 @@ function exportSession(s) {
   return {
     id: s.id, startedAt: s.startedAt, endedAt: s.endedAt, hz: s.hz, count: s.count, cal: s.cal,
     ok: s._ok.slice(), ear: s._ear.slice(), faceH: s._faceH.slice(), yaw: s._yaw.slice(), mar: s._mar.slice(),
-    sleeps: fix(s.sleeps), breaks: fix(s.breaks), hidden: fix(s.hidden),
+    sleeps: fix(s.sleeps), breaks: fix(s.breaks), hidden: fix(s.hidden), camDown: fix(s.camDown),
     gaps: s.gaps.slice(), shots: s.shots.slice(), yawns: s.yawns
   };
 }
@@ -761,8 +833,10 @@ async function stop() {
     if (s) s[1] = sess.count - 1;
     paused = false; pauseKind = null;
   }
-  const oh = sess.hidden[sess.hidden.length - 1];
-  if (oh && oh[1] === 1e12) oh[1] = Math.max(oh[0], sess.count - 1);
+  for (const list of [sess.hidden, sess.camDown]) {
+    const o = list[list.length - 1];
+    if (o && o[1] === 1e12) o[1] = Math.max(o[0], sess.count - 1);
+  }
   if (stream) stream.getVideoTracks().forEach(t => t.stop());
   try { if (wakeLock) await wakeLock.release(); } catch (e) {}
   wakeLock = null;
@@ -931,8 +1005,9 @@ function yawNote(s, o) {
             `어긋남 ${off >= 0 ? '+' : ''}${off.toFixed(2)} · 판정 폭 밖 ${(ratio * 100).toFixed(1)}%`;
   if (Math.abs(off) > o.yawThr * 0.5) {
     msg += `<br><b>기준이 실제 자습 자세와 많이 어긋나 있습니다.</b> 캘리브레이션 C단계(고개 들고 정면)로 잰 기준이라, ` +
-      `노트를 보며 고개가 돌아간 채 공부하면 그 자세 전체가 이탈 쪽으로 밀립니다. ` +
-      `판정 폭을 ${(Math.abs(off) + 0.3).toFixed(2)} 이상으로 올리면 사라집니다.`;
+      `노트를 보며 고개가 돌아간 채 공부하면 그 자세 전체가 이탈 쪽으로 밀립니다.<br>` +
+      `<b>판정 폭을 넓히는 건 해법이 아닙니다</b> — 중심이 어긋난 채로 폭만 키우면 반대쪽(진짜 딴 데 보는 방향) ` +
+      `감도까지 같이 죽습니다. 아래 버튼으로 <b>중심을 옮기세요.</b>`;
   }
   return msg;
 }
@@ -980,11 +1055,15 @@ function report(s, el) {
     <div class="legend" id="fsLeg"></div>
     <h4>10분 단위 집중률</h4>
     <canvas id="fsBars" style="height:150px"></canvas>
-    <h4>수면 · 휴식 구간</h4><div id="fsRest"></div>
+    <h4>수면 · 휴식 · 측정 불가 구간</h4><div id="fsRest"></div>
     <h4>졸음 구간</h4><div id="fsDrowsy"></div>
     <h4>이탈 구간</h4><div id="fsAway"></div>
     <h4>고개 방향 분포</h4><canvas id="fsYaw" style="height:110px"></canvas>
     <div class="note" id="fsYawNote"></div>
+    <div class="frow" style="display:flex;gap:8px;align-items:center;margin:10px 0">
+      <button id="fsSetYaw">이 세션의 자세를 정면 기준으로 저장</button>
+      <span class="note" id="fsSetYawMsg"></span>
+    </div>
     <h4>임계값 조정 — 재측정 없이 즉시 재판정</h4>
     <div id="fsSliders"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
@@ -1017,6 +1096,19 @@ function report(s, el) {
     for (const [k] of SL) { o[k] = DEFAULTS[k]; q('fsl_' + k).value = o[k]; q('fsv_' + k).textContent = o[k].toFixed(2); }
     paint();
   };
+  // 이탈 오탐의 근본 수정 — 판정 폭이 아니라 중심을 실제 자습 자세로 옮긴다.
+  // 폭을 키우면 반대 방향 감도까지 죽으므로 이쪽이 옳다.
+  q('fsSetYaw').onclick = async () => {
+    const vals = [];
+    for (let i = 0; i < s.count; i++) if (s.ok[i]) vals.push(s.yaw[i] / 100);
+    if (!vals.length) { q('fsSetYawMsg').textContent = '얼굴을 잡은 샘플이 없습니다.'; return; }
+    const before = s.cal.yawLog, next = median(vals);
+    s.cal = Object.assign({}, s.cal, { yawLog: next });
+    const saved = await saveCal(s.cal);
+    q('fsSetYawMsg').innerHTML = `정면 기준 ${before.toFixed(2)} → <b>${next.toFixed(2)}</b> ` +
+      (saved ? '저장됨. 다음 세션부터 적용됩니다.' : '<b>저장 실패</b> — 이 리포트에만 반영됩니다.');
+    paint();
+  };
   q('fsCsv').onclick = () => exportCSV(s, o);
   q('fsJson').onclick = () => exportJSON(s, o);
 
@@ -1029,10 +1121,13 @@ function report(s, el) {
     q('fsMeta').textContent = `${new Date(s.startedAt).toLocaleString('ko-KR')} · ${hms(s.count / HZ)} · ` +
       `${s.count.toLocaleString()}샘플 @${HZ}Hz · 재판정 ${ms.toFixed(0)}ms`;
     let w = '';
-    if (r.c[6]) w += `<div class="warn">탭이 가려져 잴 수 없었던 시간이 ${hms(sec(r.c[6]))} 있습니다 ` +
-      `(${s.gaps.length}회). 브라우저가 가려진 탭의 타이머를 분당 1회로 조이기 때문에 그 구간은 ` +
-      `표본이 없습니다. <b>자리비움으로 세지 않고 집중률 분모에서 빼</b> 두었으니, 이 시간이 길면 ` +
-      `집중률은 “잰 시간 안에서의 비율”로만 읽으세요.</div>`;
+    if (r.c[6]) {
+      const camSec = (s.camDown || []).reduce((a, x) => a + (x[1] - x[0] + 1), 0) / HZ;
+      w += `<div class="warn">잴 수 없었던 시간이 ${hms(sec(r.c[6]))} 있습니다` +
+        (camSec ? ` (그중 카메라 끊김 ${hms(camSec)})` : ` (탭 가려짐 ${s.gaps.length}회)`) +
+        `. <b>자리비움으로 세지 않고 집중률 분모에서 빼</b> 두었으니, 이 시간이 길면 ` +
+        `집중률은 “잰 시간 안에서의 비율”로만 읽으세요.</div>`;
+    }
     if (s.cal.warn) w += `<div class="warn">${s.cal.warn}</div>`;
     q('fsWarn').innerHTML = w;
 
@@ -1041,14 +1136,16 @@ function report(s, el) {
       (s.cal.earClosed + o.earFrac * (s.cal.earOpen - s.cal.earClosed)).toFixed(3);
     q('fsKv').innerHTML = [['집중', hms(sec(r.c[0]))], ['졸음', hms(sec(r.c[2]))], ['이탈', hms(sec(r.c[1]))],
       ['자리비움', hms(sec(r.c[3]))], ['수면', hms(sec(r.c[4]))], ['휴식', hms(sec(r.c[5]))],
-      ['가려짐', hms(sec(r.c[6]))], ['하품', s.yawns + '회']].map(([k, v]) => `<div><b>${k}</b><span>${v}</span></div>`).join('');
+      ['측정 불가', hms(sec(r.c[6]))], ['하품', s.yawns + '회']].map(([k, v]) => `<div><b>${k}</b><span>${v}</span></div>`).join('');
 
     drawTape(q('fsTape'), states);
     drawBars(q('fsBars'), states);
 
     const rest = [].concat(
       (s.sleeps || []).filter(x => x[1] >= x[0]).map(x => ['수면', x]),
-      (s.breaks || []).filter(x => x[1] >= x[0]).map(x => ['휴식', x])
+      (s.breaks || []).filter(x => x[1] >= x[0]).map(x => ['휴식', x]),
+      (s.hidden || []).filter(x => x[1] >= x[0]).map(x => ['탭 가려짐', x]),
+      (s.camDown || []).filter(x => x[1] >= x[0]).map(x => ['카메라 끊김', x])
     ).sort((a, b) => a[1][0] - b[1][0]);
     q('fsRest').innerHTML = rest.length ? `<table><tr><th>종류</th><th>시각</th><th>길이</th></tr>` +
       rest.map(([k, x]) => `<tr><td>${k}</td><td>${clockAt(s.startedAt + x[0] * SAMPLE_MS)}</td>
@@ -1208,6 +1305,16 @@ function runTests() {
       r.c[3] > 0 && r.rate < 0.9,
       `자리비움 ${(r.c[3]/HZ).toFixed(0)}초 / 집중률 ${(r.rate*100).toFixed(1)}%`); }
 
+  // 카메라가 죽은 구간은 자리비움이 아니라 측정 불가다. 이게 뒤집히면
+  // 앉아서 공부한 시간이 통째로 자리비움으로 찍힌다.
+  { const n = 30 * 60 * HZ, a = 10 * 60 * HZ, b = a + 5 * 60 * HZ - 1;
+    const s = synth(n, i => (i >= a && i <= b) ? { ok: 0 } : { ear: OPEN }, cal);
+    s.camDown = [[a, b]];
+    const st = rejudge(s, {}), r = stats(st);
+    T(13, '카메라 사망 5분 — 자리비움이 아니라 측정 불가',
+      Math.abs(secOf(st, 6) - 300) < 0.05 && secOf(st, 3) === 0 && r.rate > 0.99,
+      `측정 불가 ${secOf(st,6)}초 / 자리비움 ${secOf(st,3)}초 (기대 0) / 집중률 ${(r.rate*100).toFixed(1)}%`); }
+
   // 휴식 구간도 수면과 똑같이 분모에서 빠져야 한다 (타이머 통합용)
   { const n = 30 * 60 * HZ, a = 10 * 60 * HZ, b = a + 5 * 60 * HZ - 1;
     const s = synth(n, i => (i >= a && i <= b) ? { ok: 0 } : { ear: OPEN }, cal);
@@ -1244,6 +1351,8 @@ global.FocusSensor = {
     return n;
   },
   saveCal, loadCal,
+  get health() { return { ok: health.ok, reason: health.reason, since: health.since,
+    wakeLost: wakeLost, wakeSupported: wakeSupported }; },
   detectNow, rejudge, stats, segments, mergeSegs, earAdjust, opennessOf,
   hms, durTxt, clockAt, drawTape, drawBars, drawStrip, runTests, synth,
   sound: Sound, db: DB, showPreview
