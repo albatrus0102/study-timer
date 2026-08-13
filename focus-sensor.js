@@ -38,6 +38,9 @@ const STATE = ['집중', '이탈', '졸음', '자리비움', '수면', '휴식',
 const COLOR = ['#1f6f4a', '#b08a2e', '#c8502f', '#4a4a52', '#3b4a86', '#2a4a55', '#5a4a6a'];
 // 분모에서 빼는 상태들. 수면·휴식은 의도한 중단, 가려짐은 잴 수 없었던 구간이다.
 const EXCLUDED = [4, 5, 6];
+// 얼굴 소실을 이 샘플 수까지는 감김·회전 런을 잇는 데 허용한다 (0.5초).
+// 눈을 완전히 감으면 랜드마크를 놓치는 프레임이 실제로 생기기 때문에 0 으로 둘 수 없다.
+const MISS_BRIDGE = 5;
 
 const DEFAULTS = {
   earFrac: 0.20,      // PERCLOS P80
@@ -179,6 +182,11 @@ function step(m, i, ok, ear, faceH, yaw, states) {
   if (!ok) {
     m.miss++;
     ringPush(m, 0, 0);
+    // 아주 짧은 소실(프레임 한둘)은 감김 도중에도 일어나므로 런을 잇는다.
+    // 그보다 길면 관측하지 못한 시간이므로 "연속"으로 합산하면 안 된다.
+    // 그렇지 않으면 1.4초 감김 → 10초 소실 → 0.1초 감김이 마이크로슬립으로 판정되고
+    // 관측 불가였던 10초까지 졸음으로 백필된다.
+    if (m.miss > MISS_BRIDGE) { m.closedRun = 0; m.turnRun = 0; m.micro = false; }
     const st = ((m.miss - 1) / HZ >= o.missSec) ? 3 : m.prev;
     states[i] = st; m.prev = st; return st;
   }
@@ -197,7 +205,7 @@ function step(m, i, ok, ear, faceH, yaw, states) {
     if (!m.micro) {                       // 백필: 판정이 서는 순간 직전 1.5초를 소급
       m.micro = true;
       for (let j = i - 1; j >= 0 && j > i - 1 - m.backN; j--) {
-        if (states[j] >= 4) break;
+        if (states[j] >= 4) break;      // 수면·휴식·측정불가 구간은 침범하지 않는다
         states[j] = 2;
       }
       if (m.onEvent) m.onEvent('drowsy', i);
@@ -408,8 +416,10 @@ async function loadCal() {
    센서 본체
    ══════════════════════════════════════════════════════════════════ */
 let landmarker = null, stream = null, video = null, ready = false;
+// 엔진 재생성에 필요한 재료. 카메라만 다시 열어서는 GPU 컨텍스트 손실이 낫지 않는다.
+let visionMod = null, visionFileset = null, visionModel = null, visionDelegate = 'GPU';
 let sess = null, mach = null, stateBuf = null;
-let running = false, paused = false, pauseKind = null;
+let running = false, paused = false, pauseKind = null, pauseKeptCamera = false, pendingResume = false;
 let t0 = 0, timer = null, snapTimer = null;
 let onStateCb = null, onTickCb = null;
 let lastVideoTime = -1, lastMet = null;
@@ -426,7 +436,7 @@ let camWarmUntil = 0;
 // 고장을 "꾸준한 집중"으로 둔갑시킨다. 둘 다 조용히 틀린 데이터가 되므로 막는다.
 const FREEZE_MS = 1500;        // 이만큼 같은 프레임이면 얼었다고 본다
 const REOPEN_EVERY_MS = 5000;  // 복구 재시도 간격
-let lastFrameAt = 0, camFail = null, lastReopen = 0, reopening = false;
+let lastFrameAt = 0, camFail = null, lastReopen = 0, reopening = false, inferFailRun = 0;
 const health = { ok: true, reason: null, since: 0 };
 function setHealth(ok, reason) {
   if (health.ok === ok && health.reason === reason) return;
@@ -525,9 +535,10 @@ async function init(onCheck) {
     runningMode: 'VIDEO', numFaces: 1,
     outputFaceBlendshapes: false, outputFacialTransformationMatrixes: false
   });
-  try { landmarker = await mk('GPU'); ck('task', 'ok', 'delegate: GPU'); }
+  visionMod = vision; visionFileset = fileset; visionModel = modelBuf;
+  try { landmarker = await mk('GPU'); visionDelegate = 'GPU'; ck('task', 'ok', 'delegate: GPU'); }
   catch (e1) {
-    try { landmarker = await mk('CPU'); ck('task', 'ok', `delegate: CPU (GPU 실패: ${e1.message})`); }
+    try { landmarker = await mk('CPU'); visionDelegate = 'CPU'; ck('task', 'ok', `delegate: CPU (GPU 실패: ${e1.message})`); }
     catch (e2) { ck('task', 'bad', e2.message); return false; }
   }
 
@@ -595,7 +606,19 @@ function detectNow() {
   lastFrameAt = performance.now();
   if (camFail) { camFail = null; setHealth(true, null); }
   let res;
-  try { res = landmarker.detectForVideo(video, performance.now()); } catch (e) { return null; }
+  try {
+    res = landmarker.detectForVideo(video, performance.now());
+    inferFailRun = 0;
+  } catch (e) {
+    // GPU 컨텍스트 손실 등으로 추론이 계속 던지면, 그냥 "얼굴 없음"으로 넘기던
+    // 예전 코드는 세션 끝까지 조용히 자리비움을 적었다. 연속 실패는 장애로 본다.
+    inferFailRun++;
+    if (inferFailRun >= 10) {
+      camFail = '얼굴 인식 엔진 오류: ' + (e && e.message ? e.message : e);
+      setHealth(false, camFail);
+    }
+    return null;
+  }
   const lm = res && res.faceLandmarks && res.faceLandmarks[0];
   if (!lm) { lastMet = null; return null; }
   const m = metricsFrom(lm, video.videoWidth, video.videoHeight);
@@ -615,10 +638,19 @@ let calAbort = null;
 function calibrate(onProgress) {
   return new Promise(resolve => {
     if (!ready) return resolve({ error: '초기화가 끝나지 않았습니다.' });
+    // 측정 중에 재캘리브레이션을 하면 B단계(의도적으로 눈 감기 10초)가 그대로
+    // 학습 세션에 들어가 졸음 판정·알림·썸네일까지 발생한다. 카메라는 살려둔 채
+    // 판정만 멈추고, 그 구간을 제외 구간으로 남긴다.
+    const wasJudging = running && !paused;
+    if (wasJudging) pause('break', true);
     showPreview(true);
     const acc = CAL_STAGES.map(() => ({ ear: [], faceH: [], yaw: [], mar: [], n: 0, ok: 0 }));
     let si = 0, ts = performance.now();
-    const done = r => { clearInterval(iv); calAbort = null; showPreview(false); resolve(r); };
+    const done = r => {
+      clearInterval(iv); calAbort = null; showPreview(false);
+      if (wasJudging) resume();
+      resolve(r);
+    };
     const iv = setInterval(() => {
       const st = CAL_STAGES[si], a = acc[si];
       const el = (performance.now() - ts) / 1000;
@@ -639,8 +671,16 @@ function finishCal(acc) {
   const [A, B, C] = acc;
   const okRate = (A.ok + B.ok + C.ok) / (A.n + B.n + C.n);
   if (okRate < 0.5) return { error: `얼굴 인식률 ${(okRate*100).toFixed(0)}% — 절반 이상 놓쳤습니다. 조명/각도를 고치고 다시 하세요.` };
-  if (!A.ear.length || !B.ear.length || !C.ear.length)
-    return { error: '한 단계에서 얼굴을 전혀 못 잡았습니다. 다시 하세요.' };
+  // 합계만 보면 A·C 가 멀쩡할 때 B(눈 감기) 10초 중 한 프레임만 잡혀도 통과한다.
+  // 그 한 프레임이 earClosed 전체를 정하고, 이후 최대 10시간의 판정선을 좌우한다.
+  const names = ['A(문제 풀기)', 'B(눈 감기)', 'C(정면)'];
+  for (let k = 0; k < acc.length; k++) {
+    const a = acc[k], rate = a.n ? a.ok / a.n : 0;
+    if (rate < 0.5) {
+      return { error: `${names[k]} 단계 인식률이 ${(rate*100).toFixed(0)}% 입니다 (${a.ok}/${a.n}). ` +
+        `이 단계 값이 이후 판정 기준을 정하므로 표본이 모자라면 쓸 수 없습니다. 다시 하세요.` };
+    }
+  }
 
   const cal = {
     earOpen: pct(A.ear, 0.80),      // 최댓값 아닌 p80 — 깜빡임 배제
@@ -671,12 +711,16 @@ function newSession(cal) {
   };
 }
 function pushSample(ok, ear, faceH, yaw, mar) {
-  sess._ok.push(ok); sess._ear.push(Math.round(ear * 1000));
-  sess._faceH.push(Math.round(faceH * 100)); sess._yaw.push(Math.round(yaw * 100));
-  sess._mar.push(Math.round(mar * 100));
+  // 저장은 정수 양자화(×1000, ×100)인데 실시간 판정에 원본 실수를 쓰면
+  // 임계선 언저리에서 실시간과 사후 재판정이 갈린다. 실시간에 울린 졸음이
+  // 리포트에서는 집중으로 사라질 수 있다. 그래서 저장될 값으로 판정한다.
+  const qe = Math.round(ear * 1000), qf = Math.round(faceH * 100);
+  const qy = Math.round(yaw * 100), qm = Math.round(mar * 100);
+  sess._ok.push(ok); sess._ear.push(qe); sess._faceH.push(qf);
+  sess._yaw.push(qy); sess._mar.push(qm);
   if (stateBuf.length <= sess.count) { const b = new Uint8Array(stateBuf.length * 2); b.set(stateBuf); stateBuf = b; }
   const i = sess.count++;
-  step(mach, i, ok, ear, faceH, yaw, stateBuf);
+  step(mach, i, ok, qe / 1000, qf / 100, qy / 100, stateBuf);
   return i;
 }
 
@@ -684,9 +728,20 @@ function tick() {
   if (!running) return;
   const now = performance.now();
   let guard = 0;
+  // 카메라가 다시 열리고 워밍업까지 끝났으면 이 지점에서 판정을 재개한다.
+  if (pendingResume && now >= camWarmUntil) finishResume(sess.count);
   while (now >= t0 + sess.count * SAMPLE_MS && guard++ < 20000) {
     const due = t0 + sess.count * SAMPLE_MS;
     const fresh = (now - due) < SAMPLE_MS * 1.5;
+    // 카메라 장애 구간은 이 샘플을 판정하기 "전에" 열고 닫아야 실시간과
+    // 사후가 같은 경계를 본다. 뒤에서 하면 장애 시작·복구 샘플이 한 칸씩 어긋난다.
+    const next = sess.count;
+    const openCd = sess.camDown[sess.camDown.length - 1];
+    if (!health.ok && !paused) {
+      if (!openCd || openCd[1] !== 1e12) sess.camDown.push([next, 1e12]);
+    } else if (openCd && openCd[1] === 1e12) {
+      openCd[1] = Math.max(openCd[0], next - 1);
+    }
     let i;
     if (paused || !fresh || now < camWarmUntil) {
       // 수면·휴식 중이거나 탭이 가려져 놓친 구간 — 인덱스는 계속 증가시켜 시간축을 유지 (§6)
@@ -699,14 +754,6 @@ function tick() {
         if (m.mar > thr) { yawnRun++; if (yawnRun === Math.round(opts.yawnSec * HZ)) sess.yawns++; }
         else yawnRun = 0;
       } else { i = pushSample(0, 0, 0, 0, 0); yawnRun = 0; }
-    }
-    // 카메라가 죽어 있는 동안은 "측정 불가"로 표시한다. 자리비움과 섞이면
-    // 앉아서 공부한 시간이 통째로 이탈로 둔갑한다.
-    const open = sess.camDown[sess.camDown.length - 1];
-    if (!health.ok && !paused) {
-      if (!open || open[1] !== 1e12) sess.camDown.push([i, 1e12]);
-    } else if (open && open[1] === 1e12) {
-      open[1] = Math.max(open[0], i - 1);
     }
     if (onStateCb) onStateCb(stateBuf[i], i, sess);
   }
@@ -721,8 +768,24 @@ function maintain() {
   const now = performance.now();
   if (!health.ok && !paused && !reopening && now - lastReopen > REOPEN_EVERY_MS) {
     lastReopen = now; reopening = true;
-    if (stream) { try { stream.getVideoTracks().forEach(t => t.stop()); } catch (e) {} }
-    openCamera().finally(() => { reopening = false; });
+    const engineDead = inferFailRun >= 10;
+    Promise.resolve()
+      .then(() => {
+        // 추론 자체가 죽었으면 카메라를 다시 여는 것만으로는 안 낫는다. 엔진부터 새로 만든다.
+        if (!engineDead || !visionMod) return;
+        try { if (landmarker) landmarker.close(); } catch (e) {}
+        return visionMod.FaceLandmarker.createFromOptions(visionFileset, {
+          baseOptions: { modelAssetBuffer: visionModel, delegate: visionDelegate },
+          runningMode: 'VIDEO', numFaces: 1,
+          outputFaceBlendshapes: false, outputFacialTransformationMatrixes: false
+        }).then(l => { landmarker = l; inferFailRun = 0; console.log('[FocusSensor] 인식 엔진 재생성'); });
+      })
+      .then(() => {
+        if (stream) { try { stream.getVideoTracks().forEach(t => t.stop()); } catch (e) {} }
+        return openCamera();
+      })
+      .catch(e => console.warn('[FocusSensor] 복구 실패', e))
+      .finally(() => { reopening = false; });
   }
   // Wake Lock 은 저전력 모드·배터리 부족으로 화면이 켜진 채로도 풀린다.
   // 사양서 §1 이 지목한 "실패해도 경고가 없어 10시간이 날아가는" 구멍이 여기다.
@@ -751,7 +814,14 @@ function onVis() {
     sess.hidden.push([sess.count, 1e12]);
   } else {
     const h = sess.hidden[sess.hidden.length - 1];
-    if (h && h[1] === 1e12) h[1] = Math.max(h[0], sess.count - 1);
+    if (h && h[1] === 1e12) {
+      // sess.count 로 닫으면 안 된다. 가려진 동안 타이머가 조여져서 count 가
+      // 실시간보다 최대 1분 뒤처져 있고, 복귀 직후 tick() 이 그 공백을 ok=0 으로
+      // 채운다. 그 샘플들이 구간 밖에 남으면 "측정 불가"가 아니라 "자리비움"이 된다.
+      // 스로틀링을 처리하려던 경로가 가장 심하게 스로틀링될 때 정반대로 동작하는 셈이다.
+      const nowIdx = Math.floor((performance.now() - t0) / SAMPLE_MS);
+      h[1] = Math.max(h[0], nowIdx - 1);
+    }
     if (mach) { machReset(mach); mach.hp = 0; }   // 가려진 동안의 잔여 상태는 못 믿는다
     requestWake();
   }
@@ -793,22 +863,32 @@ async function start(cal, cbState, cbTick) {
   return sess;
 }
 
-/** kind: 'sleep'(수면 버튼) | 'break'(타이머 휴식·일시정지) */
-function pause(kind) {
+/** kind: 'sleep'(수면 버튼) | 'break'(타이머 휴식·일시정지)
+    keepCamera: 캘리브레이션처럼 카메라는 살려두고 판정만 멈출 때 true */
+function pause(kind, keepCamera) {
   if (!running || paused) return;
   paused = true; pauseKind = (kind === 'sleep') ? 'sleep' : 'break';
+  pauseKeptCamera = !!keepCamera;
   const list = pauseKind === 'sleep' ? sess.sleeps : sess.breaks;
   list.push([sess.count, 1e12]);
-  if (stream) stream.getVideoTracks().forEach(t => t.stop());   // 트랙 완전 정지
+  if (!pauseKeptCamera && stream) stream.getVideoTracks().forEach(t => t.stop());
 }
 async function resume() {
-  if (!running || !paused) return;
+  if (!running || !paused || pendingResume) return;
+  if (!pauseKeptCamera) await openCamera();     // camWarmUntil 이 여기서 설정된다
+  machReset(mach); mach.sp = 0; mach.bp = 0; mach.hp = 0; mach.cp = 0;
+  // 제외 구간을 여기서 닫으면 안 된다. 카메라를 여는 동안과 워밍업 2초 동안
+  // tick() 은 계속 ok=0 을 밀어넣는데, 구간이 이미 닫혀 있으면 그 샘플들이
+  // "직전 상태 유지" 규칙을 타고 대부분 집중으로 기록된다. 휴식마다 몇 초씩
+  // 집중이 부풀려지는 셈이다. 실제로 판정을 재개하는 순간에 닫는다.
+  pendingResume = true;
+}
+/** 워밍업이 끝나 판정을 실제로 재개하는 순간 — 제외 구간을 여기서 닫는다 */
+function finishResume(nextIdx) {
   const list = pauseKind === 'sleep' ? sess.sleeps : sess.breaks;
   const s = list[list.length - 1];
-  if (s) s[1] = Math.max(s[0], sess.count - 1);
-  await openCamera();
-  machReset(mach); mach.sp = 0; mach.bp = 0;   // 실시간 상태기 리셋
-  paused = false; pauseKind = null;
+  if (s && s[1] === 1e12) s[1] = Math.max(s[0], nextIdx - 1);
+  paused = false; pauseKind = null; pauseKeptCamera = false; pendingResume = false;
 }
 
 function exportSession(s) {
@@ -830,8 +910,8 @@ async function stop() {
   if (paused) {
     const list = pauseKind === 'sleep' ? sess.sleeps : sess.breaks;
     const s = list[list.length - 1];
-    if (s) s[1] = sess.count - 1;
-    paused = false; pauseKind = null;
+    if (s && s[1] === 1e12) s[1] = Math.max(s[0], sess.count - 1);
+    paused = false; pauseKind = null; pauseKeptCamera = false; pendingResume = false;
   }
   for (const list of [sess.hidden, sess.camDown]) {
     const o = list[list.length - 1];
@@ -1323,6 +1403,64 @@ function runTests() {
     T(11, '휴식 5분 — 수면과 같이 분모에서 제외', Math.abs(secOf(st, 5) - 300) < 0.05 && r.rate > 0.99,
       `휴식 ${secOf(st,5)}초 / 집중률 ${(r.rate*100).toFixed(1)}% (잰 시간 ${(r.denom/HZ/60).toFixed(0)}분)`); }
 
+  // --- Codex 리뷰에서 나온 것들. 기존 테스트가 재현하지 못하던 영역이다. ---
+
+  // 관측하지 못한 시간을 사이에 두고 "연속"으로 합산하면 안 된다.
+  { const n = 60 * HZ;
+    const s = synth(n, i => {
+      if (i < 14) return { ear: SHUT };            // 1.4초 감김 (판정 직전)
+      if (i < 113) return { ok: 0 };               // 9.9초 얼굴 소실
+      if (i === 113) return { ear: SHUT };         // 0.1초 감김
+      return { ear: OPEN };
+    }, cal);
+    const st = rejudge(s, {});
+    T(16, '감김 1.4초 → 소실 9.9초 → 감김 0.1초 는 마이크로슬립이 아니다',
+      st[113] !== 2 && secOf(st, 2) === 0,
+      `졸음 ${secOf(st,2).toFixed(1)}초 (기대 0)`); }
+
+  // 회전도 마찬가지
+  { const n = 60 * HZ;
+    const s = synth(n, i => {
+      if (i < 29) return { ear: OPEN, yaw: 0.9 };  // 2.9초 회전
+      if (i < 128) return { ok: 0 };               // 9.9초 소실
+      if (i === 128) return { ear: OPEN, yaw: 0.9 };
+      return { ear: OPEN };
+    }, cal);
+    const st = rejudge(s, {});
+    T('16b', '회전 2.9초 → 소실 9.9초 → 회전 0.1초 는 이탈이 아니다',
+      st[128] !== 1, `128번 샘플 상태 ${STATE[st[128]]}`); }
+
+  // 짧은 소실(0.3초)은 감김 도중에도 일어나므로 런을 끊으면 안 된다
+  { const n = 60 * HZ;
+    const s = synth(n, i => {
+      if (i < 10) return { ear: SHUT };
+      if (i < 13) return { ok: 0 };                // 0.3초만 소실
+      if (i < 30) return { ear: SHUT };
+      return { ear: OPEN };
+    }, cal);
+    T('16c', '감김 도중 0.3초 소실은 런을 잇는다', secOf(rejudge(s, {}), 2) > 0,
+      `졸음 ${secOf(rejudge(s, {}), 2).toFixed(1)}초 (0 이면 안 됨)`); }
+
+  // 실시간이 원본 실수로 판정하면 사후(정수 저장값)와 갈린다.
+  // pushSample 과 똑같이 양자화해서 넣어야 두 경로가 일치한다.
+  { const n = 40 * HZ;
+    const raw = [];
+    for (let i = 0; i < n; i++) raw.push(0.1316 + (i % 3) * 0.00002);   // 판정선 0.132 바로 아래
+    const s = { count: n, hz: HZ, cal, sleeps: [], breaks: [], hidden: [], camDown: [],
+      ok: new Int16Array(n), ear: new Int16Array(n), faceH: new Int16Array(n),
+      yaw: new Int16Array(n), mar: new Int16Array(n) };
+    const live = new Uint8Array(n);
+    const m = createMachine(cal, {}, [], [], [], []);
+    for (let i = 0; i < n; i++) {
+      const qe = Math.round(raw[i] * 1000), qf = Math.round(cal.faceH * 100);
+      s.ok[i] = 1; s.ear[i] = qe; s.faceH[i] = qf; s.yaw[i] = 0; s.mar[i] = 5;
+      step(m, i, 1, qe / 1000, qf / 100, 0, live);       // pushSample 과 동일한 경로
+    }
+    const batch = rejudge(s, {});
+    let diff = 0; for (let i = 0; i < n; i++) if (batch[i] !== live[i]) diff++;
+    T(17, '임계선 언저리에서 실시간 == 사후 (양자화 일치)', diff === 0,
+      `불일치 ${diff}개 / ${n} · 원본 0.1316 → 저장 ${Math.round(0.1316*1000)} · 판정선 ${earThr.toFixed(3)}`); }
+
   const pass = R.filter(Boolean).length;
   L.push(`\n${pass}/${R.length} 통과`);
   return { text: L.join('\n'), pass, total: R.length };
@@ -1331,7 +1469,7 @@ function runTests() {
 /* ─────────────────── 공개 인터페이스 ─────────────────── */
 global.FocusSensor = {
   HZ, STATE, COLOR, CHECKS, DEFAULTS, EXCLUDED,
-  init, calibrate, start, pause, resume, stop, report,
+  init, calibrate, start, pause, resume, stop, report, snapshot,
   abortCalibration: () => calAbort && calAbort(),
   get ready() { return ready; },
   get running() { return running; },

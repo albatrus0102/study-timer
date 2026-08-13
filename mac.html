@@ -1330,6 +1330,9 @@
 
     updatePresetButtonsUI();
     updateDisplay();
+    // 프리셋 변경은 running=false 로 만든다. 훅이 없으면 타이머는 멈춘 채
+    // 센서만 계속 돌아, 쉬는 시간이 집중 세션에 그대로 쌓인다.
+    focusOnTimerChange();
   }
 
   // ---------- Custom focus duration ----------
@@ -2178,9 +2181,16 @@
   focusCloseBtn.addEventListener("click", closeFocusPanel);
   focusDim.addEventListener("click", closeFocusPanel);
 
-  // 창을 닫기 전에 마지막 스냅샷을 남긴다 (1분 주기 스냅샷의 빈틈 메우기)
+  // 창을 닫기 전에 마지막 스냅샷을 남긴다 (1분 주기 스냅샷의 빈틈 메우기).
+  // stop() 을 부르면 안 된다 — BFCache 로 되살아나는 경우 타이머는 계속 도는데
+  // 센서만 죽은 채로 돌아온다. 저장만 하고 센서는 살려 둔다.
   window.addEventListener("pagehide", function () {
-    try { if (FS() && FS().running) FS().stop(); } catch (e) {}
+    try { if (FS() && FS().running) FS().snapshot(); } catch (e) {}
+  });
+  // BFCache 복귀. 이때 타이머 상태와 센서 상태가 어긋나 있을 수 있으므로 다시 맞춘다.
+  window.addEventListener("pageshow", function (e) {
+    if (!e.persisted) return;
+    try { focusOnTimerChange(); updateFocusChip(); } catch (err) {}
   });
 
   init();
