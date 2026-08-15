@@ -16,7 +16,7 @@
 
 // 배포할 때마다 올린다. 캐시된 옛 코드가 도는지 화면에서 바로 확인하려는 용도.
 // sw.js 의 CACHE_NAME 과 같은 번호를 쓴다.
-const VERSION = 'v22';
+const VERSION = 'v23';
 
 const HZ = 10, SAMPLE_MS = 1000 / HZ;
 
@@ -1197,32 +1197,53 @@ function drawYawHist(c, s, o) {
     실제로 A단계에서 실사용보다 고개를 훨씬 숙여 잰 세션이 있었는데,
     그 탓에 보정이 EAR 을 키우는 게 아니라 깎고 있었다. */
 function calFit(s, o) {
-  const ears = [], fhs = [];
-  for (let i = 0; i < s.count; i++) if (s.ok[i]) { ears.push(s.ear[i] / 1000); fhs.push(s.faceH[i] / 100); }
+  const ears = [], fhs = [], norm = [];
+  let clamped = 0;
+  for (let i = 0; i < s.count; i++) if (s.ok[i]) {
+    const e = s.ear[i] / 1000, f = s.faceH[i] / 100;
+    ears.push(e); fhs.push(f);
+    // 클램프 없이 기준 자세로 환산한 값. 보정 모델(EAR·faceH 둘 다 cos(pitch)에 비례)이
+    // 맞다면 이 값의 중앙값은 캘리브레이션의 earOpen 과 비슷해야 한다.
+    // 이게 진짜 적합도 지표다. faceH 가 다르다는 것 자체는 문제가 아니다 —
+    // 자세가 다르면 당연히 다르고, 보정이 하는 일이 바로 그 차이를 되돌리는 것이다.
+    norm.push(e * (s.cal.faceH / Math.max(f, 1e-6)));
+    const r = f / s.cal.faceH;
+    if (r < 0.55 || r > 1.15) clamped++;
+  }
   if (ears.length < HZ * 10) return '<div class="note">표본이 모자라 판단할 수 없습니다.</div>';
-  const mEar = median(ears), mFh = median(fhs);
-  const r = clamp(mFh / s.cal.faceH, 0.55, 1.15);
-  const gain = 1 + o.headComp * (1 / r - 1);
-  const earRatio = mEar / s.cal.earOpen;
+  const mEar = median(ears), mFh = median(fhs), mNorm = median(norm);
+  const fit = mNorm / s.cal.earOpen;
+  const clampRate = clamped / ears.length;
   const rows = [
-    ['뜬 눈 EAR', s.cal.earOpen.toFixed(3), mEar.toFixed(3), `실제가 기준의 ${(earRatio * 100).toFixed(0)}%`],
-    ['고개 높이 faceH', s.cal.faceH.toFixed(2), mFh.toFixed(2), `보정 계수 ${gain.toFixed(3)}배`],
+    ['고개 높이 faceH', s.cal.faceH.toFixed(2), mFh.toFixed(2),
+      '자세가 다른 건 정상 — 보정이 되돌립니다'],
+    ['뜬 눈 EAR (원본)', s.cal.earOpen.toFixed(3), mEar.toFixed(3),
+      '자세가 다르면 이 값도 달라집니다'],
+    ['<b>기준 자세로 환산한 EAR</b>', `<b>${s.cal.earOpen.toFixed(3)}</b>`, `<b>${mNorm.toFixed(3)}</b>`,
+      `<b>${(fit * 100).toFixed(0)}%</b> — 100%에 가까울수록 잘 맞음`],
     ['분리도 (뜬 눈 − 감은 눈)', s.cal.sep != null ? s.cal.sep.toFixed(3) : '—', '—',
-      (s.cal.sep != null && s.cal.sep < 0.09) ? '<span style="color:#d8b878">여유가 적음</span>' : '충분']
+      (s.cal.sep != null && s.cal.sep < 0.06) ? '<span style="color:#d8b878">여유가 적음</span>' : '충분'],
+    ['보정 상한에 걸린 샘플', '—', `${(clampRate * 100).toFixed(0)}%`,
+      clampRate > 0.5 ? '<span style="color:#d8b878">자세 차이가 커서 보정이 덜 됨</span>' : '문제없음']
   ];
   let warn = '';
-  if (gain < 0.95) {
-    warn += `<div class="warn"><b>보정이 거꾸로 작동하고 있습니다.</b> 캘리브레이션 A단계에서 실제 자습보다 ` +
-      `고개를 더 숙이고 계셨습니다(기준 faceH ${s.cal.faceH.toFixed(2)} vs 실제 ${mFh.toFixed(2)}). ` +
-      `그래서 보정이 EAR 을 키우는 대신 ${gain.toFixed(2)}배로 <b>깎고</b> 있습니다. 졸음이 과하게 잡힙니다.<br>` +
-      `<b>평소 공부하는 자세 그대로</b> 다시 캘리브레이션하세요.</div>`;
+  if (fit < 0.75 || fit > 1.35) {
+    warn += `<div class="warn"><b>캘리브레이션이 이번 세션과 맞지 않습니다.</b> 기준 자세로 환산한 EAR 이 ` +
+      `${mNorm.toFixed(3)} 인데 캘리브레이션의 뜬 눈은 ${s.cal.earOpen.toFixed(3)} 입니다 (${(fit*100).toFixed(0)}%). ` +
+      `자세 차이로는 설명되지 않는 차이라 <b>조명이나 카메라 위치가 달라진 것</b>일 수 있습니다. ` +
+      `다시 캘리브레이션하세요.</div>`;
+  } else if (clampRate > 0.5) {
+    warn += `<div class="warn">자세가 캘리브레이션 때와 많이 달라 보정이 상한에 걸린 샘플이 ` +
+      `${(clampRate*100).toFixed(0)}% 입니다. 판정이 크게 틀리지는 않지만, ` +
+      `<b>이번 세션 같은 자세로 다시 캘리브레이션하면</b> 더 정확해집니다. ` +
+      `종이 문제풀이와 화면 강의처럼 자세가 크게 다른 두 상황을 오간다면, 더 오래 하는 쪽에 맞추세요.</div>`;
   }
-  if (earRatio > 1.3 || earRatio < 0.75) {
-    warn += `<div class="warn">캘리브레이션 때 잰 뜬 눈(${s.cal.earOpen.toFixed(3)})과 실제 세션(${mEar.toFixed(3)})이 ` +
-      `${(Math.abs(earRatio - 1) * 100).toFixed(0)}% 차이 납니다. 캘리브레이션 때와 지금의 자세·조명이 다릅니다. ` +
-      `이 상태면 판정선이 실제와 어긋난 곳에 그어집니다.</div>`;
+  if (s.cal.sep != null && s.cal.sep < 0.06) {
+    warn += `<div class="warn">뜬 눈과 감은 눈의 차이(분리도 ${s.cal.sep.toFixed(3)})가 작습니다. ` +
+      `판정선이 좁은 폭 안에 놓여 작은 흔들림에도 졸음이 오갈 수 있습니다. 조명을 밝히거나 ` +
+      `카메라를 눈높이에 가깝게 올린 뒤 다시 재면 나아집니다.</div>`;
   }
-  if (!warn) warn = '<div class="note">캘리브레이션이 실제 자세와 잘 맞습니다.</div>';
+  if (!warn) warn = '<div class="note">캘리브레이션이 이번 세션과 잘 맞습니다.</div>';
   return `<table><tr><th>항목</th><th>캘리브레이션</th><th>이번 세션</th><th>해석</th></tr>` +
     rows.map(x => `<tr><td>${x[0]}</td><td>${x[1]}</td><td>${x[2]}</td><td>${x[3]}</td></tr>`).join('') +
     `</table>` + warn;
