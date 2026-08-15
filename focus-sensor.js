@@ -16,7 +16,7 @@
 
 // 배포할 때마다 올린다. 캐시된 옛 코드가 도는지 화면에서 바로 확인하려는 용도.
 // sw.js 의 CACHE_NAME 과 같은 번호를 쓴다.
-const VERSION = 'v23';
+const VERSION = 'v24';
 
 const HZ = 10, SAMPLE_MS = 1000 / HZ;
 
@@ -1431,17 +1431,34 @@ function report(s, el) {
 
     // 10초 이내 병합, 1.5초 미만 제외
     const segs = mergeSegs(segments(states, 2), 10, 1.5);
+    const earThrNow = s.cal.earClosed + o.earFrac * (s.cal.earOpen - s.cal.earClosed);
     q('fsDrowsy').innerHTML = segs.length ? `<table>
-      <tr><th>시각</th><th>길이</th><th>눈 열림 평균</th><th>썸네일</th></tr>` + segs.map(x => {
-        let sum = 0, n = 0;
+      <tr><th>시각</th><th>길이</th><th>유형</th><th>실제 감김</th><th>눈 열림 평균</th><th>썸네일</th></tr>` +
+      segs.map(x => {
+        let sum = 0, n = 0, shut = 0, run = 0, maxRun = 0;
         for (let i = x[0]; i <= x[1]; i++) if (s.ok[i]) {
-          sum += opennessOf(earAdjust(s.ear[i] / 1000, s.faceH[i] / 100, s.cal, o.headComp), s.cal); n++;
+          const a = earAdjust(s.ear[i] / 1000, s.faceH[i] / 100, s.cal, o.headComp);
+          sum += opennessOf(a, s.cal); n++;
+          if (a < earThrNow) { shut++; run++; if (run > maxRun) maxRun = run; } else run = 0;
         }
+        // 어느 경로가 잡았는지는 구간 안의 최장 연속 감김으로 갈린다.
+        // 1.5초를 넘겼으면 마이크로슬립, 아니면 60초 창 누적이 잡은 것이다.
+        const micro = maxRun / HZ >= o.closedSec;
+        const kind = micro
+          ? '<span style="color:#c8502f">감김</span>'
+          : '<span style="color:#b08a2e">누적</span>';
         const shots = (s.shots || []).filter(h => h.i >= x[0] - 20 && h.i <= x[1] + 20).slice(0, 3);
         return `<tr><td>${clockAt(s.startedAt + x[0] * SAMPLE_MS)}</td><td>${durTxt((x[1]-x[0]+1)/HZ)}</td>
+          <td>${kind}</td>
+          <td>${(shut / HZ).toFixed(1)}초<span class="note"> (최장 ${(maxRun/HZ).toFixed(1)})</span></td>
           <td>${n ? (sum/n*100).toFixed(0)+'%' : '—'}</td>
           <td class="shots">${shots.map(h => `<img src="${h.img}">`).join('')}</td></tr>`;
-      }).join('') + `</table>` : '<div class="note">없음</div>';
+      }).join('') + `</table>
+      <div class="note"><b>감김</b> — 1.5초 이상 연속으로 눈을 감았습니다. 그 순간 졸았다는 뜻입니다.<br>
+      <b>누적</b> — 지금 눈은 떠 있지만 최근 60초 중 ${(o.perclos*100).toFixed(0)}% 넘게 감겨 있었습니다.
+      길이는 “감고 있던 시간”이 아니라 “졸음으로 판정된 시간”이라, 눈 열림 평균이 높게 나옵니다.
+      실제로 감았던 시간은 <b>실제 감김</b> 칸을 보세요.</div>`
+      : '<div class="note">없음</div>';
 
     // 이탈 구간 — 언제, 얼마나 돌아갔는지. 오탐이면 여기 편차가 임계선 언저리에 몰려 있다.
     if (!o.awayOnTurn) {
