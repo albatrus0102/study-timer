@@ -2065,6 +2065,12 @@
       var state = !fs.running ? "대기 — 타이머 집중을 시작하면 관측을 시작합니다"
         : fs.paused ? "휴식 중 — 카메라 정지됨"
         : "관측 중 · " + fs.hms((s ? s.count : 0) / fs.HZ);
+      // 백그라운드 클럭이 실제로 돌고 있는지. 이게 꺼져 있으면 가려지는 순간 측정이 끊긴다.
+      if (fs.running) {
+        state += fs.health.bgActive
+          ? ' · <span style="color:#4fa87a">가려져도 측정 켜짐</span>'
+          : ' · <span style="color:#d4573a">가려지면 측정 중단</span>';
+      }
       html += '<div class="fdim">' + state + '</div>' +
         '<div class="frow"><button class="fbtn" id="fOff">측정 끄고 리포트 보기</button></div>';
     }
