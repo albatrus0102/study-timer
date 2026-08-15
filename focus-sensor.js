@@ -55,6 +55,11 @@ const DEFAULTS = {
   marMul: 2.2, marFloor: 0.35, yawnSec: 0.6,
   alertCooldownSec: 20,
   alerts: true,
+  // 가려져도 계속 측정. setTimeout 은 가려진 탭에서 분당 1회까지 조여지지만
+  // 오디오 스레드가 미는 콜백은 조여지지 않는다(실측 11.7Hz). 그걸 클럭으로 쓰고,
+  // 매 샘플 캔버스에 프레임을 그려 카메라 공급이 끊기지 않게 한다.
+  // 실측: 최소화 40초 동안 새 프레임 471장(11.74Hz) 수신.
+  bgMode: true,
   // 졸음으로 찍힌 순간의 128×96 썸네일. 오판을 눈으로 걸러내지 못하면 임계값을 조정할
   // 근거가 없어서 기본값은 켜짐이다 (§8). 이 기기 IndexedDB 에만 남고 어디로도 전송되지 않는다.
   shots: true
@@ -430,6 +435,13 @@ let wakeLock = null, lastAlert = -1e9, yawnRun = 0, shotCanvas = null;
 const CAM_WARMUP_MS = 2000;
 let camWarmUntil = 0;
 
+// 백그라운드 클럭. AudioContext 는 사용자 제스처에서 만들어야 하므로 start() 에서 켠다.
+let bgCtx = null, bgOsc = null, bgProc = null, bgActive = false;
+// 프레임을 실제로 끌어오는 캔버스. 아무도 소비하지 않으면 가려진 탭의 비디오는
+// 공급이 멈춘다. 매 샘플 여기에 그려야 프레임이 계속 온다.
+let frameCv = null, frameCtx = null;
+let hiddenAt = -1;      // 가려지기 시작한 샘플 인덱스
+
 // 카메라는 10시간 사이에 조용히 죽는다. 다른 앱이 뺏거나, 연속성 카메라가 끼어들거나,
 // 시스템이 절전에서 파이프라인을 재시작하거나. 감지하지 않으면 판정기는 그걸 그냥
 // "얼굴 소실 → 자리비움"으로 적고, 프레임이 얼면 마지막 지표를 되풀이해서
@@ -592,15 +604,25 @@ async function openCamera() {
 /** 프레임 1회 추론. 영상은 저장하지 않고 지표만 남긴다. */
 function detectNow() {
   if (!landmarker || !video || !video.videoWidth) return null;
-  // 탭이 가려지면 브라우저가 그 탭의 비디오 프레임 공급을 멈춘다. 이건 카메라 고장이
-  // 아니라 정상 동작이다. 이걸 "얼었다"로 오판하면 복구한답시고 트랙을 정지시켜
-  // 초록 LED 가 꺼지고, 5초마다 껐다 켰다를 반복하게 된다.
-  // 어차피 가려진 구간은 hidden 범위로 이미 "측정 불가" 처리된다.
-  if (document.hidden) return null;
+  // 캔버스로 프레임을 끌어온다. 가려진 탭의 비디오는 아무도 소비하지 않으면 공급이
+  // 멈추는데, 매 샘플 그려주면 계속 들어온다 (실측으로 확인). 추론도 이 캔버스로 한다.
+  if (!frameCv) {
+    frameCv = document.createElement('canvas');
+    frameCv.width = 640; frameCv.height = 480;
+    frameCtx = frameCv.getContext('2d', { willReadFrequently: false });
+  }
+  if (frameCv.width !== video.videoWidth && video.videoWidth) {
+    frameCv.width = video.videoWidth; frameCv.height = video.videoHeight;
+  }
+  try { frameCtx.drawImage(video, 0, 0, frameCv.width, frameCv.height); }
+  catch (e) { return null; }
+
   if (video.currentTime === lastVideoTime) {
     // 같은 프레임 재사용은 10Hz 샘플링 / 15fps 카메라라 정상이다. 다만 몇 초씩
     // 안 바뀌면 화면이 언 것이므로, 낡은 지표를 되풀이하지 않고 소실로 처리한다.
-    if (performance.now() - lastFrameAt > FREEZE_MS) {
+    // 가려진 상태에서는 클럭이 흔들릴 수 있으므로 판정을 넉넉히 잡는다.
+    const limit = document.hidden ? FREEZE_MS * 4 : FREEZE_MS;
+    if (performance.now() - lastFrameAt > limit) {
       camFail = '카메라 화면이 멈췄습니다';
       setHealth(false, camFail);
       return null;
@@ -612,7 +634,7 @@ function detectNow() {
   if (camFail) { camFail = null; setHealth(true, null); }
   let res;
   try {
-    res = landmarker.detectForVideo(video, performance.now());
+    res = landmarker.detectForVideo(frameCv, performance.now());
     inferFailRun = 0;
   } catch (e) {
     // GPU 컨텍스트 손실 등으로 추론이 계속 던지면, 그냥 "얼굴 없음"으로 넘기던
@@ -626,7 +648,7 @@ function detectNow() {
   }
   const lm = res && res.faceLandmarks && res.faceLandmarks[0];
   if (!lm) { lastMet = null; return null; }
-  const m = metricsFrom(lm, video.videoWidth, video.videoHeight);
+  const m = metricsFrom(lm, frameCv.width, frameCv.height);
   lastMet = isFinite(m.ear) ? m : null;
   return lastMet;
 }
@@ -729,7 +751,9 @@ function pushSample(ok, ear, faceH, yaw, mar) {
   return i;
 }
 
-function tick() {
+/** 두 클럭(setTimeout / 오디오)이 함께 부른다. 시간 기준으로 밀린 샘플만 채우므로
+    누가 몇 번 부르든 중복되지 않는다. */
+function pump() {
   if (!running) return;
   const now = performance.now();
   let guard = 0;
@@ -764,7 +788,37 @@ function tick() {
   }
   maintain();
   if (onTickCb) onTickCb(sess, stateBuf);
+}
+
+function tick() {
+  if (!running) return;
+  pump();
   timer = setTimeout(tick, Math.max(2, t0 + sess.count * SAMPLE_MS - performance.now()));
+}
+
+/** 오디오 스레드가 미는 보조 클럭. 가려진 탭에서 setTimeout 이 분당 1회로 조여져도
+    이건 살아 있다(실측 11.7Hz). 소리는 거의 안 들리는 세기로 흘린다. */
+function startBgClock() {
+  if (!opts.bgMode || bgActive) return;
+  try {
+    bgCtx = Sound.init();
+    if (!bgCtx) return;
+    if (bgCtx.state === 'suspended') bgCtx.resume();
+    bgOsc = bgCtx.createOscillator();
+    const g = bgCtx.createGain();
+    bgOsc.frequency.value = 60; g.gain.value = 0.0008;
+    bgOsc.connect(g).connect(bgCtx.destination); bgOsc.start();
+    bgProc = bgCtx.createScriptProcessor(4096, 1, 1);   // 48kHz 기준 약 11.7Hz
+    bgProc.onaudioprocess = () => { if (running) pump(); };
+    bgProc.connect(bgCtx.destination);
+    bgActive = true;
+    console.log('[FocusSensor] 백그라운드 클럭 켬');
+  } catch (e) { console.warn('[FocusSensor] 백그라운드 클럭 실패', e); bgActive = false; }
+}
+function stopBgClock() {
+  try { if (bgOsc) bgOsc.stop(); } catch (e) {}
+  try { if (bgProc) { bgProc.onaudioprocess = null; bgProc.disconnect(); } } catch (e) {}
+  bgOsc = null; bgProc = null; bgActive = false;
 }
 
 /** 주기 점검 — 카메라 복구와 Wake Lock 재획득. 10시간 방치가 전제라
@@ -818,8 +872,13 @@ function onVis() {
   if (!sess) return;
   if (document.hidden) {
     sess.gaps.push(sess.count);
-    sess.hidden.push([sess.count, 1e12]);
+    hiddenAt = sess.count;
+    // 백그라운드 클럭이 살아 있으면 가려져도 계속 잰다. 미리 "측정 불가"로
+    // 찍어두지 않고, 돌아왔을 때 실제로 못 쟀는지를 보고 판단한다.
+    if (!bgActive) sess.hidden.push([sess.count, 1e12]);
   } else {
+    if (bgActive && hiddenAt >= 0) evaluateHidden();
+    hiddenAt = -1;
     const h = sess.hidden[sess.hidden.length - 1];
     if (h && h[1] === 1e12) {
       // sess.count 로 닫으면 안 된다. 가려진 동안 타이머가 조여져서 count 가
@@ -839,6 +898,23 @@ function onVis() {
 }
 const WAKE_CHECK_MS = 30000;
 let lastWakeCheck = 0, wakeSupported = ('wakeLock' in navigator), wakeLost = false;
+/** 가려졌던 구간을 실제로 쟀는지 표본으로 판단한다. 백그라운드 클럭이 있어도
+    기기·설정에 따라 프레임이 안 올 수 있으므로, 가정하지 않고 증거를 본다.
+    거의 못 쟀으면 그 구간을 "측정 불가"로 남긴다. */
+function evaluateHidden() {
+  const a = hiddenAt, b = sess.count - 1;
+  if (b < a) return;
+  let obs = 0;
+  for (let i = a; i <= b; i++) if (sess.ok[i]) obs++;
+  const span = b - a + 1, rate = obs / span;
+  if (rate < 0.3) {
+    sess.hidden.push([a, b]);
+    console.warn(`[FocusSensor] 가려진 ${(span/HZ).toFixed(1)}초 중 관측 ${(rate*100).toFixed(0)}% — 측정 불가로 기록`);
+  } else {
+    console.log(`[FocusSensor] 가려진 ${(span/HZ).toFixed(1)}초를 관측률 ${(rate*100).toFixed(0)}% 로 측정함`);
+  }
+}
+
 async function requestWake() {
   if (!wakeSupported) return;
   try {
@@ -868,6 +944,8 @@ async function start(cal, cbState, cbTick) {
   running = true; paused = false; pauseKind = null;
   t0 = performance.now(); lastAlert = -1e9; yawnRun = 0;
   requestWake();
+  startBgClock();                 // 사용자 제스처 안에서 호출되므로 여기서 켠다
+  hiddenAt = -1;
   document.addEventListener('visibilitychange', onVis);
   snapTimer = setInterval(snapshot, 60000);
   tick();
@@ -917,6 +995,7 @@ async function stop() {
   if (!running) return sess ? exportSession(sess) : null;
   running = false;
   clearTimeout(timer); clearInterval(snapTimer);
+  stopBgClock();
   document.removeEventListener('visibilitychange', onVis);
   if (paused) {
     const list = pauseKind === 'sleep' ? sess.sleeps : sess.breaks;
@@ -1512,7 +1591,7 @@ global.FocusSensor = {
   },
   saveCal, loadCal,
   get health() { return { ok: health.ok, reason: health.reason, since: health.since,
-    wakeLost: wakeLost, wakeSupported: wakeSupported }; },
+    wakeLost: wakeLost, wakeSupported: wakeSupported, bgActive: bgActive }; },
   detectNow, rejudge, stats, segments, mergeSegs, earAdjust, opennessOf,
   hms, durTxt, clockAt, drawTape, drawBars, drawStrip, runTests, synth,
   sound: Sound, db: DB, showPreview

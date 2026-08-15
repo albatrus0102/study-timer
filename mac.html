@@ -1955,6 +1955,7 @@
       if (!fs || !fs.running) { focusChipText.textContent = "대기"; focusChip.firstElementChild.style.background = "#5a5a64"; return; }
       if (fs.paused) { focusChipText.textContent = "휴식"; focusChip.firstElementChild.style.background = fs.COLOR[5]; return; }
       var h = fs.health;
+      if (document.hidden && h.bgActive) { /* 가려진 채로도 측정 중 — 칩은 어차피 안 보인다 */ }
       if (!h.ok || h.wakeLost) {
         focusChipText.textContent = h.ok ? "화면 꺼짐 방지 풀림" : h.reason;
         focusChip.firstElementChild.style.background = fs.COLOR[2];
@@ -2038,7 +2039,13 @@
       '<input type="checkbox" id="fAlerts"' + (fs.options.alerts ? ' checked' : '') + '> 졸음 알림</label>' +
       '<label class="fdim" style="display:flex;gap:6px;align-items:center">' +
       '<input type="checkbox" id="fBt"> 블루투스 연결 유지</label>' +
+      '<label class="fdim" style="display:flex;gap:6px;align-items:center">' +
+      '<input type="checkbox" id="fBg"' + (fs.options.bgMode ? ' checked' : '') + '> 가려져도 계속 측정</label>' +
       '</div>' +
+      '<div class="fdim" style="font-size:11px">가려진 탭은 브라우저가 타이머를 분당 1회로 조입니다. ' +
+      '이 옵션은 오디오 스레드를 클럭으로 써서 그 제한을 우회합니다(실측 11.7Hz). ' +
+      '대신 거의 안 들리는 60Hz 소리를 계속 흘리므로 Safari 탭에 스피커 표시가 뜨고 배터리를 조금 더 씁니다. ' +
+      '끄면 가려진 동안은 “측정 불가”로 남습니다.</div>' +
       '<div class="frow" style="margin-top:4px">' +
       '<label class="fdim" style="display:flex;gap:6px;align-items:center">' +
       '<input type="checkbox" id="fShots"' + (fs.options.shots ? ' checked' : '') + '> 졸음 순간 썸네일 저장</label>' +
@@ -2087,6 +2094,12 @@
     if (g("fAlerts")) g("fAlerts").onchange = function (e) { FS().setOptions({ alerts: e.target.checked }); };
     if (g("fBt")) g("fBt").onchange = function (e) { try { FS().sound.setKeepAlive(e.target.checked); } catch (err) {} };
     if (g("fShots")) g("fShots").onchange = function (e) { FS().setOptions({ shots: e.target.checked }); };
+    if (g("fBg")) g("fBg").onchange = function (e) {
+      FS().setOptions({ bgMode: e.target.checked });
+      // 세션이 이미 돌고 있으면 다음 세션부터 적용된다는 걸 알려준다
+      if (FS().running) g("fBg").parentElement.insertAdjacentHTML("afterend",
+        '<span class="fdim" style="font-size:11px">— 다음 측정부터 적용</span>');
+    };
     if (g("fClearShots")) g("fClearShots").onclick = async function () {
       var msg = g("fShotsMsg");
       try {
