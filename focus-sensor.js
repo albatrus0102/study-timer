@@ -1214,10 +1214,21 @@ function report(s, el) {
     let w = '';
     if (r.c[6]) {
       const camSec = (s.camDown || []).reduce((a, x) => a + (x[1] - x[0] + 1), 0) / HZ;
+      const hidSec = sec(r.c[6]) - camSec;
       w += `<div class="warn">잴 수 없었던 시간이 ${hms(sec(r.c[6]))} 있습니다` +
         (camSec ? ` (그중 카메라 끊김 ${hms(camSec)})` : ` (탭 가려짐 ${s.gaps.length}회)`) +
         `. <b>자리비움으로 세지 않고 집중률 분모에서 빼</b> 두었으니, 이 시간이 길면 ` +
-        `집중률은 “잰 시간 안에서의 비율”로만 읽으세요.</div>`;
+        `집중률은 “잰 시간 안에서의 비율”로만 읽으세요.` +
+        // 세션의 3할 이상이 탭 가려짐이면 배치 문제다. 인강 전체화면이 대표적인 원인이라
+        // 리포트를 볼 때 바로 알 수 있게 해법을 붙여 둔다.
+        (hidSec > sec(s.count) * 0.3
+          ? `<br><br><b>세션의 ${(hidSec / sec(s.count) * 100).toFixed(0)}% 가 탭 가려짐입니다.</b> ` +
+            `맥에서 영상을 전체화면으로 보면 타이머 탭이 다른 Space 로 밀려나 카메라 영상이 끊깁니다. ` +
+            `브라우저 정책이라 코드로는 못 뚫습니다. 영상을 <b>PiP(화상 속 화상)</b>로 띄우고 ` +
+            `타이머 탭을 앞에 두면 측정이 유지됩니다. Split View 나 외부 모니터도 됩니다. ` +
+            `타이머의 공부 시간 기록 자체는 이 구간에도 정상입니다.`
+          : '') +
+        `</div>`;
     }
     if (s.cal.warn) w += `<div class="warn">${s.cal.warn}</div>`;
     q('fsWarn').innerHTML = w;
