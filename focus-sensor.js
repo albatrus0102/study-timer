@@ -146,14 +146,14 @@ function createMachine(cal, opt, sleeps, breaks, hidden, camDown) {
     backN: Math.round(o.closedSec * HZ),
     minValid: Math.round(o.perclosMinValidSec * HZ),
     win, ring: new Uint8Array(win), rvalid: new Uint8Array(win),
-    rp: 0, sClosed: 0, sValid: 0,
+    rp: 0, sClosed: 0, sValid: 0, pushed: 0,
     miss: 0, closedRun: 0, turnRun: 0, micro: false,
     prev: 0, sp: 0, bp: 0, hp: 0, cp: 0, inX: false,
     onEvent: null
   };
 }
 function machReset(m) {
-  m.ring.fill(0); m.rvalid.fill(0); m.rp = 0; m.sClosed = 0; m.sValid = 0;
+  m.ring.fill(0); m.rvalid.fill(0); m.rp = 0; m.sClosed = 0; m.sValid = 0; m.pushed = 0;
   m.miss = 0; m.closedRun = 0; m.turnRun = 0; m.micro = false; m.prev = 0;
 }
 function ringPush(m, valid, closed) {
@@ -161,6 +161,7 @@ function ringPush(m, valid, closed) {
   m.rvalid[m.rp] = valid; m.ring[m.rp] = closed;
   m.sValid += valid; m.sClosed += closed;
   m.rp = (m.rp + 1) % m.win;
+  if (m.pushed < m.win) m.pushed++;
 }
 function inRange(list, ptrName, m, i) {
   while (m[ptrName] < list.length && list[m[ptrName]][1] < i) m[ptrName]++;
@@ -215,7 +216,11 @@ function step(m, i, ok, ear, faceH, yaw, states) {
       }
       if (m.onEvent) m.onEvent('drowsy', i);
     }
-  } else if (m.sValid >= m.minValid && m.sClosed / m.sValid > o.perclos) {
+  // 창이 한 바퀴 다 돌기 전에는 PERCLOS 를 쓰지 않는다.
+  // 덜 찬 창은 분모가 작아 비율이 부풀려진다. 실제로 2.8초 감김 하나가
+  // 세션 초반에 28/200 = 14% 로 계산돼, 눈을 다 뜨고 있는 30초를 졸음으로
+  // 만들었다(눈 열림 평균 81%). 초반 급성 졸음은 1.5초 마이크로슬립 경로가 잡는다.
+  } else if (m.pushed >= m.win && m.sValid >= m.minValid && m.sClosed / m.sValid > o.perclos) {
     st = 2;
     if (m.prev !== 2 && m.onEvent) m.onEvent('drowsy', i);
   } else if (m.turnRun > 0 && (m.turnRun - 1) / HZ >= o.turnSec) {
@@ -1178,6 +1183,42 @@ function drawYawHist(c, s, o) {
   g.textAlign = 'center'; g.fillText('정면 기준', xOf(s.cal.yawLog), H - 4);
   g.textAlign = 'right';  g.fillText('오른쪽 →', W - 4, H - 4);
 }
+/** 캘리브레이션이 실제 자세와 맞는지. 어긋나면 판정 전체가 흔들리므로
+    숫자만 보고 "왜 이러지" 하지 않도록 리포트에서 짚어준다.
+    실제로 A단계에서 실사용보다 고개를 훨씬 숙여 잰 세션이 있었는데,
+    그 탓에 보정이 EAR 을 키우는 게 아니라 깎고 있었다. */
+function calFit(s, o) {
+  const ears = [], fhs = [];
+  for (let i = 0; i < s.count; i++) if (s.ok[i]) { ears.push(s.ear[i] / 1000); fhs.push(s.faceH[i] / 100); }
+  if (ears.length < HZ * 10) return '<div class="note">표본이 모자라 판단할 수 없습니다.</div>';
+  const mEar = median(ears), mFh = median(fhs);
+  const r = clamp(mFh / s.cal.faceH, 0.55, 1.15);
+  const gain = 1 + o.headComp * (1 / r - 1);
+  const earRatio = mEar / s.cal.earOpen;
+  const rows = [
+    ['뜬 눈 EAR', s.cal.earOpen.toFixed(3), mEar.toFixed(3), `실제가 기준의 ${(earRatio * 100).toFixed(0)}%`],
+    ['고개 높이 faceH', s.cal.faceH.toFixed(2), mFh.toFixed(2), `보정 계수 ${gain.toFixed(3)}배`],
+    ['분리도 (뜬 눈 − 감은 눈)', s.cal.sep != null ? s.cal.sep.toFixed(3) : '—', '—',
+      (s.cal.sep != null && s.cal.sep < 0.09) ? '<span style="color:#d8b878">여유가 적음</span>' : '충분']
+  ];
+  let warn = '';
+  if (gain < 0.95) {
+    warn += `<div class="warn"><b>보정이 거꾸로 작동하고 있습니다.</b> 캘리브레이션 A단계에서 실제 자습보다 ` +
+      `고개를 더 숙이고 계셨습니다(기준 faceH ${s.cal.faceH.toFixed(2)} vs 실제 ${mFh.toFixed(2)}). ` +
+      `그래서 보정이 EAR 을 키우는 대신 ${gain.toFixed(2)}배로 <b>깎고</b> 있습니다. 졸음이 과하게 잡힙니다.<br>` +
+      `<b>평소 공부하는 자세 그대로</b> 다시 캘리브레이션하세요.</div>`;
+  }
+  if (earRatio > 1.3 || earRatio < 0.75) {
+    warn += `<div class="warn">캘리브레이션 때 잰 뜬 눈(${s.cal.earOpen.toFixed(3)})과 실제 세션(${mEar.toFixed(3)})이 ` +
+      `${(Math.abs(earRatio - 1) * 100).toFixed(0)}% 차이 납니다. 캘리브레이션 때와 지금의 자세·조명이 다릅니다. ` +
+      `이 상태면 판정선이 실제와 어긋난 곳에 그어집니다.</div>`;
+  }
+  if (!warn) warn = '<div class="note">캘리브레이션이 실제 자세와 잘 맞습니다.</div>';
+  return `<table><tr><th>항목</th><th>캘리브레이션</th><th>이번 세션</th><th>해석</th></tr>` +
+    rows.map(x => `<tr><td>${x[0]}</td><td>${x[1]}</td><td>${x[2]}</td><td>${x[3]}</td></tr>`).join('') +
+    `</table>` + warn;
+}
+
 function yawNote(s, o) {
   const vals = [];
   for (let i = 0; i < s.count; i++) if (s.ok[i]) vals.push(s.yaw[i] / 100);
@@ -1243,6 +1284,7 @@ function report(s, el) {
     <h4>수면 · 휴식 · 측정 불가 구간</h4><div id="fsRest"></div>
     <h4>졸음 구간</h4><div id="fsDrowsy"></div>
     <h4>이탈 구간</h4><div id="fsAway"></div>
+    <h4>캘리브레이션 적합도</h4><div id="fsFit"></div>
     <h4>고개 방향 분포</h4><canvas id="fsYaw" style="height:110px"></canvas>
     <div class="note" id="fsYawNote"></div>
     <div class="frow" style="display:flex;gap:8px;align-items:center;margin:10px 0">
@@ -1380,6 +1422,7 @@ function report(s, el) {
       정면 기준(캘리브레이션 C단계)이 실제 자습 자세와 어긋난 것이라 폭을 넓히면 사라집니다.</div>`
       : '<div class="note">없음</div>';
 
+    q('fsFit').innerHTML = calFit(s, o);
     drawYawHist(q('fsYaw'), s, o);
     q('fsYawNote').innerHTML = yawNote(s, o);
   }
@@ -1434,13 +1477,23 @@ function runTests() {
       segs.length === 1 && len === 5.0 && segs[0][0] === a,
       `구간 ${segs.length}개, 길이 ${len.toFixed(1)}초, 시작 ${segs.length?segs[0][0]:'-'} (기대 ${a})`); }
 
-  // 창 미충전 구간에서는 규칙 5가 이어받는다. 사양서 §5.4 "유효 샘플 20초 이상" 단서상 정상.
+  // 창이 덜 찼을 때 PERCLOS 가 끼어들면 안 된다. 실사용에서 2.8초 감김 하나가
+  // 28/200=14% 로 계산돼 눈 열림 81% 인 30초를 졸음으로 만들었다. 창이 한 바퀴
+  // 돌기 전에는 규칙 5를 쓰지 않으므로 이제 정확히 감긴 만큼만 나와야 한다.
   { const a = 200;
     const segs = segments(rejudge(synth(60 * HZ, i => ({ ear: (i >= a && i < a + 50) ? SHUT : OPEN }), cal), {}), 2);
     const len = segs.length ? (segs[0][1] - segs[0][0] + 1) / HZ : 0;
-    T('4b', '창 미충전 구간(20초 지점)의 같은 5초 감김 — 규칙 5가 이어받음',
-      segs.length === 1 && segs[0][0] === a && len > 5.0,
-      `길이 ${len.toFixed(1)}초. 백필로 시작점은 ${a}로 정확하나 PERCLOS 창이 덜 차 50/333>15% 로 연장됨 (참고용)`); }
+    T('4b', '창 미충전 구간(20초 지점)의 5초 감김 — PERCLOS 가 연장하지 않는다',
+      segs.length === 1 && segs[0][0] === a && len === 5.0,
+      `길이 ${len.toFixed(1)}초 (기대 5.0), 시작 ${segs.length?segs[0][0]:'-'}`); }
+
+  // 회귀 방지 — 짧은 감김 하나가 창이 덜 찬 구간에서 긴 졸음으로 번지면 안 된다
+  { const n = 50 * HZ, a = 15 * HZ;
+    const s = synth(n, i => ({ ear: (i >= a && i < a + 28) ? SHUT : (i % 40 < 3 ? SHUT : OPEN) }), cal);
+    const st = rejudge(s, {});
+    T('4c', '2.8초 감김 + 정상 깜빡임 (실사용 재현) — 졸음이 번지지 않는다',
+      secOf(st, 2) <= 4.0,
+      `졸음 ${secOf(st,2).toFixed(1)}초 (기대 ≤4.0). 고치기 전에는 30초 넘게 번졌다`); }
 
   { const s = synth(120 * HZ, () => ({ ear: 0.12, faceH: 0.93 }), cal);
     const f1 = secOf(rejudge(s, { headComp: 1 }), 0), d0 = secOf(rejudge(s, { headComp: 0 }), 2);
