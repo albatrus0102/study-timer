@@ -318,6 +318,63 @@
   #blackout.on { display: block; }
 
   /* stats panel */
+  /* ---- 집중 측정 (FocusSensor) ---- */
+  #focusChip {
+    display: none;
+    align-items: center;
+    gap: 0.7vmin;
+    font-size: 1.7vmin;
+    letter-spacing: 0.04em;
+  }
+  #focusChip.on { display: inline-flex; }
+  #focusChip i {
+    width: 0.9vmin; height: 0.9vmin; border-radius: 50%;
+    background: #1f6f4a; display: inline-block;
+  }
+  #focusDim {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+    display: none; z-index: 52;
+  }
+  #focusDim.open { display: block; }
+  #focusPanel {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 720px; max-width: 92vw; max-height: 86vh; overflow-y: auto;
+    background: rgba(18,18,20,0.98); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 10px; padding: 20px; backdrop-filter: blur(12px);
+    z-index: 53; display: none; color: #e8e8ea;
+    font-size: 13px; line-height: 1.6; text-align: left;
+  }
+  #focusPanel.open { display: block; }
+  #focusPanel h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+  #focusPanel h4 { margin: 20px 0 8px; font-size: 13px; font-weight: 600; }
+  #focusPanel .fdim { color: rgba(255,255,255,0.45); font-size: 12px; }
+  #focusPanel .frow { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin: 14px 0; }
+  #focusPanel .fbtn {
+    background: #1b1d23; border: 1px solid rgba(255,255,255,0.14); color: #e8e8ea;
+    border-radius: 8px; padding: 8px 14px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  #focusPanel .fbtn:hover { background: #23262e; }
+  #focusPanel .fbtn:disabled { opacity: 0.4; cursor: default; }
+  #focusPanel .fbtn.pri { background: #20313f; border-color: #2e4a5e; }
+  #focusPanel .fck { display: flex; gap: 9px; align-items: flex-start; padding: 4px 0; font-size: 12px; }
+  #focusPanel .fck .d { width: 8px; height: 8px; border-radius: 50%; background: #5a5a64; margin-top: 5px; flex: none; }
+  #focusPanel .fck.ok .d { background: #4fa87a; }
+  #focusPanel .fck.bad .d { background: #d4573a; }
+  #focusPanel .fck.run .d { background: #c8a03a; }
+  #focusPanel .fck .n { width: 160px; flex: none; color: rgba(255,255,255,0.75); }
+  #focusPanel .fck .m { color: rgba(255,255,255,0.45); flex: 1; word-break: break-word; }
+  #focusPanel .fck.bad .m { color: #e58a6f; }
+  #focusPanel .fwarn {
+    border: 1px solid #5e4a26; background: #22190c; border-radius: 8px;
+    padding: 10px 12px; font-size: 12px; color: #d8b878; margin: 10px 0;
+  }
+  #focusPanel .fstage { font-size: 11px; color: rgba(255,255,255,0.4); letter-spacing: 0.08em; }
+  #focusPanel .finstr { font-size: 20px; font-weight: 600; margin: 8px 0 4px; }
+  #focusPanel .fcnt { font-size: 48px; font-weight: 300; font-variant-numeric: tabular-nums; }
+  #focusPanel .fbar { height: 4px; background: #1a1c22; border-radius: 2px; overflow: hidden; margin-top: 12px; }
+  #focusPanel .fbar i { display: block; height: 100%; background: #4fa87a; width: 0; }
+  #focusCloseBtn { position: absolute; top: 14px; right: 14px; }
+
   #statsDim {
     position: fixed;
     inset: 0;
@@ -462,6 +519,7 @@
   <div id="meta">
     <span id="modeLabel">집중</span>
     <span id="studyTime">오늘: 0분</span>
+    <span id="focusChip"><i></i><span id="focusChipText">—</span></span>
   </div>
 
   <div id="musicPanel" class="collapsed">
@@ -496,9 +554,10 @@
     <button id="fullscreenBtn" class="ctrl-btn">전체화면</button>
     <button id="musicToggleBtn" class="ctrl-btn">♪ 음악</button>
     <button id="statsBtn" class="ctrl-btn">통계</button>
+    <button id="focusBtn" class="ctrl-btn">집중 측정</button>
   </div>
 
-  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · 6 스톱워치 · N 건너뛰기 · S 통계 · M 음악 · P 재생/일시정지 · ,/. 곡 이동 · B 화면 끄기</div>
+  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · 6 스톱워치 · N 건너뛰기 · S 통계 · M 음악 · P 재생/일시정지 · ,/. 곡 이동 · B 화면 끄기 · F 집중 측정</div>
 
   <div id="customDim"></div>
   <div id="customPanel">
@@ -511,6 +570,12 @@
   </div>
 
   <div id="blackout"></div>
+
+  <div id="focusDim"></div>
+  <div id="focusPanel">
+    <button id="focusCloseBtn" class="ctrl-btn">✕</button>
+    <div id="focusBody"></div>
+  </div>
 
   <div id="statsDim"></div>
   <div id="statsPanel">
@@ -1110,6 +1175,7 @@
     // 휴식이 끝나고 대기하던 사용자가 집중을 다시 시작하는 이 시점에 음악을 재개한다.
     resumeMusicForFocus();
     updateDisplay();
+    focusOnTimerChange();
   }
 
   function pause() {
@@ -1127,6 +1193,7 @@
     }
     running = false;
     updateDisplay();
+    focusOnTimerChange();
   }
 
   // 카운트다운 중(초과 전)에는 일시정지/재개. 초과(overtime) 상태에서는
@@ -1156,6 +1223,7 @@
     endTime = null;
     lastTickTime = null;
     updateDisplay();
+    focusOnTimerChange();
   }
 
   // 집중 → 휴식으로 전환한다. 실제 집중 경과 시간(focusElapsedMs, 초과분 포함)을 기준으로
@@ -1199,6 +1267,7 @@
       lastTickTime = null;
     }
     updateDisplay();
+    focusOnTimerChange();
     syncStats(true);
   }
 
@@ -1218,6 +1287,7 @@
     lastTickTime = null;
     if (notify) notifyBreakOver();
     updateDisplay();
+    focusOnTimerChange();
     syncStats(true);
   }
 
@@ -1260,6 +1330,9 @@
 
     updatePresetButtonsUI();
     updateDisplay();
+    // 프리셋 변경은 running=false 로 만든다. 훅이 없으면 타이머는 멈춘 채
+    // 센서만 계속 돌아, 쉬는 시간이 집중 세션에 그대로 쌓인다.
+    focusOnTimerChange();
   }
 
   // ---------- Custom focus duration ----------
@@ -1410,6 +1483,11 @@
     if (mod) return;
 
     // e.code 기준 판정: 한글 입력 상태에서도 물리 키 위치로 동작
+    if (e.code === "KeyF") {
+      e.preventDefault();
+      toggleFocusPanel();
+      return;
+    }
     if (e.code === "Space") {
       e.preventDefault();
       togglePause();
@@ -1463,6 +1541,9 @@
       if (customPanel.classList.contains("open")) {
         e.preventDefault();
         closeCustomInput();
+      } else if (focusPanel.classList.contains("open")) {
+        e.preventDefault();
+        closeFocusPanel();
       } else if (statsPanel.classList.contains("open")) {
         e.preventDefault();
         closeStats();
@@ -1799,6 +1880,337 @@
     renderSyncUI();
     if (getGithubToken()) syncStats(true);
   }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 집중 측정 (FocusSensor 연동)
+  //
+  // 타이머가 주인이고 센서는 그 밑에 붙는 모듈이다. 센서가 죽어도 타이머는
+  // 평소대로 동작해야 하므로 모든 진입점을 try/catch 로 감싼다.
+  // 센서 스크립트는 사용자가 측정을 켤 때 처음 내려받는다 (지연 로딩).
+  // ══════════════════════════════════════════════════════════════════
+  var FOCUS_ENABLED_KEY = "studyTimer_focusEnabled";
+  var focusEnabled = false;      // 사용자가 측정을 켰는가
+  var focusReady = false;        // 센서 초기화(카메라·모델)까지 끝났는가
+  var focusCal = null;           // 저장된 캘리브레이션
+  var focusLastSession = null;   // 마지막으로 끝낸 세션 (리포트용)
+  var focusChecks = {};          // 진단 체크포인트 상태
+  var focusCalibrating = false;
+  var focusLoading = false;
+
+  var focusDim = document.getElementById("focusDim");
+  var focusPanel = document.getElementById("focusPanel");
+  var focusBody = document.getElementById("focusBody");
+  var focusBtn = document.getElementById("focusBtn");
+  var focusChip = document.getElementById("focusChip");
+  var focusChipText = document.getElementById("focusChipText");
+  var focusCloseBtn = document.getElementById("focusCloseBtn");
+
+  function FS() { return window.FocusSensor; }
+
+  function loadSensor() {
+    if (window.FocusSensor) return Promise.resolve(true);
+    if (focusLoading) return focusLoading;
+    focusLoading = new Promise(function (res) {
+      var el = document.createElement("script");
+      el.src = "focus-sensor.js";
+      el.onload = function () { res(!!window.FocusSensor); };
+      el.onerror = function () { res(false); };
+      document.head.appendChild(el);
+    });
+    return focusLoading;
+  }
+
+  // 타이머 상태가 바뀔 때마다 호출된다 (start/pause/reset/휴식 전환).
+  // 센서는 "측정 켬 + 돌아가는 중 + 집중 모드" 일 때만 관측한다.
+  function focusOnTimerChange() {
+    try {
+      if (!focusEnabled || !focusReady || !FS()) return;
+      var want = running && mode === "focus";
+      if (want && !FS().running) {
+        FS().start(focusCal, null, onFocusTick);
+      } else if (want && FS().paused) {
+        FS().resume();
+      } else if (!want && FS().running && !FS().paused) {
+        FS().pause("break");   // 휴식·일시정지는 집중률 분모에서 빠진다
+      }
+      updateFocusChip();
+    } catch (err) {
+      console.warn("[집중 측정] 상태 전환 실패", err);
+    }
+  }
+
+  var focusChipLast = -1e9;
+  function onFocusTick(sess, states) {
+    if (sess.count - focusChipLast < 10) return;   // 1초에 한 번
+    focusChipLast = sess.count;
+    updateFocusChip(sess, states);
+  }
+
+  function updateFocusChip(sess, states) {
+    try {
+      if (!focusEnabled) { focusChip.classList.remove("on"); return; }
+      focusChip.classList.add("on");
+      var fs = FS();
+      if (!focusReady) { focusChipText.textContent = "측정 준비 안 됨"; focusChip.firstElementChild.style.background = "#5a5a64"; return; }
+      if (!fs || !fs.running) { focusChipText.textContent = "대기"; focusChip.firstElementChild.style.background = "#5a5a64"; return; }
+      if (fs.paused) { focusChipText.textContent = "휴식"; focusChip.firstElementChild.style.background = fs.COLOR[5]; return; }
+      var h = fs.health;
+      if (document.hidden && h.bgActive) { /* 가려진 채로도 측정 중 — 칩은 어차피 안 보인다 */ }
+      if (!h.ok || h.wakeLost) {
+        focusChipText.textContent = h.ok ? "화면 꺼짐 방지 풀림" : h.reason;
+        focusChip.firstElementChild.style.background = fs.COLOR[2];
+        return;
+      }
+      var s = sess || fs.session, st = states || fs.states;
+      if (!s || !s.count) { focusChipText.textContent = "측정 중"; return; }
+      var cur = st[s.count - 1];
+      var r = fs.stats(st.subarray(0, s.count));
+      focusChipText.textContent = fs.STATE[cur] + " · " + (r.rate * 100).toFixed(0) + "%";
+      focusChip.firstElementChild.style.background = fs.COLOR[cur];
+    } catch (err) { /* 칩은 장식이라 실패해도 무시 */ }
+  }
+
+  function focusCk(key, status, msg) {
+    focusChecks[key] = { status: status, msg: msg };
+    var row = document.getElementById("fck_" + key);
+    if (row) {
+      row.className = "fck " + (status || "");
+      row.querySelector(".m").textContent = msg || "";
+    }
+  }
+
+  function calAgeText(c) {
+    var days = Math.round((Date.now() - c.at) / 86400000);
+    return new Date(c.at).toLocaleString("ko-KR") + (days ? " · " + days + "일 전" : "");
+  }
+
+  function renderFocusPanel() {
+    var fs = FS();
+    var html = '<h3>집중 측정</h3>' +
+      '<div class="fdim">얼굴 지표만 저장하고 영상은 즉시 폐기합니다. ' +
+      '타이머가 집중 모드로 돌아가는 동안에만 관측하고, 휴식·일시정지 구간은 집중률 분모에서 빠집니다.</div>';
+
+    if (!fs) {
+      html += '<div class="frow"><button class="fbtn pri" id="fEnable">측정 켜기</button></div>' +
+        '<div class="fdim">처음 켤 때 센서 모듈(약 40KB)과 얼굴 인식 모델(3.6MB)을 내려받고 카메라 권한을 묻습니다.</div>';
+      focusBody.innerHTML = html;
+      bindFocusPanel();
+      return;
+    }
+
+    // 진단 체크포인트
+    html += '<h4>초기화</h4><div>';
+    for (var i = 0; i < fs.CHECKS.length; i++) {
+      var k = fs.CHECKS[i][0], lbl = fs.CHECKS[i][1];
+      var c = focusChecks[k] || { status: "", msg: "대기" };
+      html += '<div class="fck ' + (c.status || "") + '" id="fck_' + k + '">' +
+        '<span class="d"></span><span class="n">' + lbl + '</span>' +
+        '<span class="m">' + (c.msg || "") + '</span></div>';
+    }
+    html += '</div>';
+
+    if (!focusReady) {
+      html += '<div class="fwarn">빨간 점이 찍힌 단계가 실패 지점입니다. 그 줄의 메시지를 그대로 읽으세요. ' +
+        'https 또는 localhost 가 아니면 카메라 권한 창 자체가 뜨지 않습니다.</div>' +
+        '<div class="frow"><button class="fbtn pri" id="fEnable">다시 시도</button>' +
+        '<button class="fbtn" id="fBeep">알림 미리듣기</button></div>';
+      focusBody.innerHTML = html;
+      bindFocusPanel();
+      return;
+    }
+
+    // 캘리브레이션
+    html += '<h4>캘리브레이션</h4>';
+    if (focusCal) {
+      html += '<div class="fdim">저장됨 · ' + calAgeText(focusCal) + '<br>' +
+        'earOpen ' + focusCal.earOpen.toFixed(3) + ' / earClosed ' + focusCal.earClosed.toFixed(3) +
+        ' / 분리도 ' + focusCal.sep.toFixed(3) + ' / 판정선 ' + focusCal.earThr.toFixed(3) +
+        ' / faceH ' + focusCal.faceH.toFixed(2) + '</div>';
+      if (focusCal.warn) html += '<div class="fwarn">' + focusCal.warn + '</div>';
+    } else {
+      html += '<div class="fdim">아직 없습니다. 65초짜리 캘리브레이션을 한 번 해야 측정을 시작할 수 있습니다. ' +
+        'A단계 45초는 <b>실제로 문제를 푸는 자세</b>로 하세요 — 그 자세가 집중의 기준선이 됩니다.</div>';
+    }
+    html += '<div class="frow">' +
+      '<button class="fbtn ' + (focusCal ? '' : 'pri') + '" id="fCal">' +
+      (focusCal ? '다시 측정 (65초)' : '캘리브레이션 시작 (65초)') + '</button>' +
+      '<button class="fbtn" id="fBeep">알림 미리듣기</button>' +
+      '<label class="fdim" style="display:flex;gap:6px;align-items:center">' +
+      '<input type="checkbox" id="fAlerts"' + (fs.options.alerts ? ' checked' : '') + '> 졸음 알림</label>' +
+      '<label class="fdim" style="display:flex;gap:6px;align-items:center">' +
+      '<input type="checkbox" id="fBt"> 블루투스 연결 유지</label>' +
+      '<label class="fdim" style="display:flex;gap:6px;align-items:center">' +
+      '<input type="checkbox" id="fBg"' + (fs.options.bgMode ? ' checked' : '') + '> 가려져도 계속 측정</label>' +
+      '</div>' +
+      '<div class="fdim" style="font-size:11px">가려진 탭은 브라우저가 타이머를 분당 1회로 조입니다. ' +
+      '이 옵션은 오디오 스레드를 클럭으로 써서 그 제한을 우회합니다(실측 11.7Hz). ' +
+      '대신 거의 안 들리는 60Hz 소리를 계속 흘리므로 Safari 탭에 스피커 표시가 뜨고 배터리를 조금 더 씁니다. ' +
+      '끄면 가려진 동안은 “측정 불가”로 남습니다.</div>' +
+      '<div class="frow" style="margin-top:4px">' +
+      '<label class="fdim" style="display:flex;gap:6px;align-items:center">' +
+      '<input type="checkbox" id="fShots"' + (fs.options.shots ? ' checked' : '') + '> 졸음 순간 썸네일 저장</label>' +
+      '<button class="fbtn" id="fClearShots">저장된 썸네일 지우기</button>' +
+      '<span class="fdim" id="fShotsMsg"></span></div>' +
+      '<div class="fdim" style="font-size:11px">128×96 크기로 졸음 판정이 선 순간에만, 세션당 최대 150장 남깁니다. ' +
+      '오판(필기 자세를 졸음으로 찍은 것 등)을 눈으로 걸러내야 임계값을 고칠 근거가 생기기 때문입니다. ' +
+      '이 맥의 IndexedDB 에만 저장되고 서버로 전송되지 않습니다. 끄면 리포트의 썸네일 칸이 비게 됩니다.</div>';
+
+    // 측정 상태
+    html += '<h4>측정</h4>';
+    if (!focusEnabled) {
+      html += '<div class="fdim">꺼져 있습니다.</div>' +
+        '<div class="frow"><button class="fbtn pri" id="fOn"' + (focusCal ? '' : ' disabled') + '>측정 켜기</button></div>';
+    } else {
+      var s = fs.session;
+      var state = !fs.running ? "대기 — 타이머 집중을 시작하면 관측을 시작합니다"
+        : fs.paused ? "휴식 중 — 카메라 정지됨"
+        : "관측 중 · " + fs.hms((s ? s.count : 0) / fs.HZ);
+      // 백그라운드 클럭이 실제로 돌고 있는지. 이게 꺼져 있으면 가려지는 순간 측정이 끊긴다.
+      if (fs.running) {
+        state += fs.health.bgActive
+          ? ' · <span style="color:#4fa87a">가려져도 측정 켜짐</span>'
+          : ' · <span style="color:#d4573a">가려지면 측정 중단</span>';
+      }
+      html += '<div class="fdim">' + state + '</div>' +
+        '<div class="frow"><button class="fbtn" id="fOff">측정 끄고 리포트 보기</button></div>';
+    }
+
+    html += '<div id="fReport"></div>';
+    focusBody.innerHTML = html;
+    bindFocusPanel();
+    if (focusLastSession) fs.report(focusLastSession, document.getElementById("fReport"));
+  }
+
+  function bindFocusPanel() {
+    var g = function (id) { return document.getElementById(id); };
+    if (g("fEnable")) g("fEnable").onclick = enableFocus;
+    if (g("fBeep")) g("fBeep").onclick = function () { try { FS().sound.alert(); } catch (e) {} };
+    if (g("fCal")) g("fCal").onclick = runCalibration;
+    if (g("fOn")) g("fOn").onclick = function () {
+      focusEnabled = true;
+      try { localStorage.setItem(FOCUS_ENABLED_KEY, "1"); } catch (e) {}
+      focusOnTimerChange(); updateFocusChip(); renderFocusPanel();
+    };
+    if (g("fOff")) g("fOff").onclick = async function () {
+      focusEnabled = false;
+      try { localStorage.setItem(FOCUS_ENABLED_KEY, "0"); } catch (e) {}
+      try { if (FS() && FS().running) focusLastSession = await FS().stop(); } catch (e) { console.warn(e); }
+      updateFocusChip(); renderFocusPanel();
+    };
+    if (g("fAlerts")) g("fAlerts").onchange = function (e) { FS().setOptions({ alerts: e.target.checked }); };
+    if (g("fBt")) g("fBt").onchange = function (e) { try { FS().sound.setKeepAlive(e.target.checked); } catch (err) {} };
+    if (g("fShots")) g("fShots").onchange = function (e) { FS().setOptions({ shots: e.target.checked }); };
+    if (g("fBg")) g("fBg").onchange = function (e) {
+      FS().setOptions({ bgMode: e.target.checked });
+      // 세션이 이미 돌고 있으면 다음 세션부터 적용된다는 걸 알려준다
+      if (FS().running) g("fBg").parentElement.insertAdjacentHTML("afterend",
+        '<span class="fdim" style="font-size:11px">— 다음 측정부터 적용</span>');
+    };
+    if (g("fClearShots")) g("fClearShots").onclick = async function () {
+      var msg = g("fShotsMsg");
+      try {
+        var n = await FS().clearShots();
+        if (focusLastSession && focusLastSession.shots) focusLastSession.shots = [];
+        if (msg) msg.textContent = n + "장 삭제됨";
+        renderFocusPanel();
+        if (document.getElementById("fShotsMsg")) document.getElementById("fShotsMsg").textContent = n + "장 삭제됨";
+      } catch (err) { if (msg) msg.textContent = "삭제 실패"; }
+    };
+  }
+
+  async function enableFocus() {
+    var btn = document.getElementById("fEnable");
+    if (btn) { btn.disabled = true; btn.textContent = "초기화 중…"; }
+    var loaded = await loadSensor();
+    if (!loaded) {
+      focusBody.innerHTML = '<h3>집중 측정</h3><div class="fwarn">focus-sensor.js 를 불러오지 못했습니다. ' +
+        '파일이 같은 폴더에 있는지 확인하세요.</div>';
+      return;
+    }
+    try { FS().sound.init(); } catch (e) {}   // AudioContext 는 사용자 제스처에서 생성
+    renderFocusPanel();
+    focusReady = await FS().init(focusCk);
+    if (focusReady) {
+      var saved = await FS().loadCal();
+      if (saved) focusCal = saved;
+    }
+    renderFocusPanel();
+  }
+
+  async function runCalibration() {
+    if (focusCalibrating) return;
+    focusCalibrating = true;
+    focusBody.innerHTML = '<h3>캘리브레이션</h3>' +
+      '<div class="fstage" id="fcStage">A단계 · 1/3</div>' +
+      '<div class="finstr" id="fcInstr">—</div>' +
+      '<div class="fdim" id="fcHint"></div>' +
+      '<div class="fcnt" id="fcCnt">0</div>' +
+      '<div class="fbar"><i id="fcBar"></i></div>' +
+      '<div class="frow"><span class="fdim">얼굴 인식 <b id="fcOk">—</b> · EAR <b id="fcEar">—</b> · faceH <b id="fcFh">—</b></span></div>' +
+      '<div class="frow"><button class="fbtn" id="fcAbort">중단</button></div>';
+    document.getElementById("fcAbort").onclick = function () { FS().abortCalibration(); };
+
+    var r = await FS().calibrate(function (p) {
+      var g = function (id) { return document.getElementById(id); };
+      if (!g("fcStage")) return;
+      g("fcStage").textContent = p.key + "단계 · " + (p.stage + 1) + "/3";
+      g("fcInstr").textContent = p.instr;
+      g("fcHint").textContent = p.hint;
+      g("fcCnt").textContent = Math.ceil(p.left);
+      g("fcBar").style.width = (p.frac * 100) + "%";
+      g("fcOk").textContent = (p.okRate * 100).toFixed(0) + "%";
+      g("fcEar").textContent = p.m ? p.m.ear.toFixed(3) : "—";
+      g("fcFh").textContent = p.m ? p.m.faceH.toFixed(2) : "—";
+    });
+    focusCalibrating = false;
+    var saveFailed = false;
+    if (r.cal) {
+      focusCal = r.cal;
+      // 저장이 실패해도 이번 세션은 메모리 값으로 돌아간다. 다만 조용히 넘어가면
+      // 다음에 열었을 때 "다시 측정하라"는 말만 보게 되므로 실패를 화면에 남긴다.
+      saveFailed = !(await FS().saveCal(focusCal));
+    }
+    renderFocusPanel();
+    if (r.error) {
+      focusBody.insertAdjacentHTML("afterbegin", '<div class="fwarn">' + r.error + '</div>');
+    } else if (saveFailed) {
+      focusBody.insertAdjacentHTML("afterbegin", '<div class="fwarn">캘리브레이션은 잘 됐지만 ' +
+        '저장에 실패했습니다. 이번 세션은 그대로 쓸 수 있지만 창을 닫으면 사라집니다. ' +
+        '(브라우저 저장소가 막혀 있거나 용량이 꽉 찬 경우)</div>');
+    }
+  }
+
+  function openFocusPanel() {
+    focusDim.classList.add("open");
+    focusPanel.classList.add("open");
+    renderFocusPanel();
+  }
+  function closeFocusPanel() {
+    focusDim.classList.remove("open");
+    focusPanel.classList.remove("open");
+  }
+  function toggleFocusPanel() {
+    if (focusPanel.classList.contains("open")) closeFocusPanel(); else openFocusPanel();
+  }
+
+  focusBtn.addEventListener("click", function (e) {
+    toggleFocusPanel();
+    if (e.target && e.target.blur) e.target.blur();
+  });
+  focusCloseBtn.addEventListener("click", closeFocusPanel);
+  focusDim.addEventListener("click", closeFocusPanel);
+
+  // 창을 닫기 전에 마지막 스냅샷을 남긴다 (1분 주기 스냅샷의 빈틈 메우기).
+  // stop() 을 부르면 안 된다 — BFCache 로 되살아나는 경우 타이머는 계속 도는데
+  // 센서만 죽은 채로 돌아온다. 저장만 하고 센서는 살려 둔다.
+  window.addEventListener("pagehide", function () {
+    try { if (FS() && FS().running) FS().snapshot(); } catch (e) {}
+  });
+  // BFCache 복귀. 이때 타이머 상태와 센서 상태가 어긋나 있을 수 있으므로 다시 맞춘다.
+  window.addEventListener("pageshow", function (e) {
+    if (!e.persisted) return;
+    try { focusOnTimerChange(); updateFocusChip(); } catch (err) {}
+  });
 
   init();
 })();
