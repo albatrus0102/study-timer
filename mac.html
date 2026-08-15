@@ -2041,6 +2041,8 @@
       '<input type="checkbox" id="fBt"> 블루투스 연결 유지</label>' +
       '<label class="fdim" style="display:flex;gap:6px;align-items:center">' +
       '<input type="checkbox" id="fBg"' + (fs.options.bgMode ? ' checked' : '') + '> 가려져도 계속 측정</label>' +
+      '<label class="fdim" style="display:flex;gap:6px;align-items:center">' +
+      '<input type="checkbox" id="fAway"' + (fs.options.awayOnTurn ? ' checked' : '') + '> 고개 돌림을 이탈로 셈</label>' +
       '</div>' +
       '<div class="fdim" style="font-size:11px">가려진 탭은 브라우저가 타이머를 분당 1회로 조입니다. ' +
       '이 옵션은 오디오 스레드를 클럭으로 써서 그 제한을 우회합니다(실측 11.7Hz). ' +
@@ -2100,6 +2102,7 @@
     if (g("fAlerts")) g("fAlerts").onchange = function (e) { FS().setOptions({ alerts: e.target.checked }); };
     if (g("fBt")) g("fBt").onchange = function (e) { try { FS().sound.setKeepAlive(e.target.checked); } catch (err) {} };
     if (g("fShots")) g("fShots").onchange = function (e) { FS().setOptions({ shots: e.target.checked }); };
+    if (g("fAway")) g("fAway").onchange = function (e) { FS().setOptions({ awayOnTurn: e.target.checked }); };
     if (g("fBg")) g("fBg").onchange = function (e) {
       FS().setOptions({ bgMode: e.target.checked });
       // 세션이 이미 돌고 있으면 다음 세션부터 적용된다는 걸 알려준다

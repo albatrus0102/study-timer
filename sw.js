@@ -1,7 +1,7 @@
 "use strict";
 
 // 캐시 이름에 버전을 포함해 배포할 때마다 올려주면 구버전 캐시가 자동 정리된다.
-var CACHE_NAME = "pomodoro-v19";
+var CACHE_NAME = "pomodoro-v20";
 // 아이패드 오프라인의 생명줄. 하나라도 실패하면 설치가 통째로 깨지므로 최소한만 둔다.
 var PRECACHE_URLS = ["./", "./index.html", "./icon.png"];
 // 맥 전용. mac.html 과 focus-sensor.js 는 반드시 같은 세대로 묶여야 한다 —

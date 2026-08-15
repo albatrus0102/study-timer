@@ -47,6 +47,11 @@ const DEFAULTS = {
   perclos: 0.15,      // 60초 창 임계
   headComp: 1.0,      // 고개 숙임 보정 계수
   yawThr: 0.35,
+  // 고개를 돌린 걸 "이탈"로 셀지. 기본 꺼짐.
+  // 실측 결과 왼쪽 노트를 보는 자세가 그대로 이탈로 찍혔다. 무엇을 보고 있는지는
+  // 카메라로 구분할 수 없으므로, 자리를 실제로 비운 것(얼굴 소실)만 세는 게 정직하다.
+  // 고개 방향은 계속 기록하므로 리포트의 분포에서 볼 수 있고, 켜면 종전대로 판정한다.
+  awayOnTurn: false,
   closedSec: 1.5,     // 마이크로슬립 즉시 판정
   turnSec: 3.0,
   missSec: 10.0,
@@ -223,7 +228,7 @@ function step(m, i, ok, ear, faceH, yaw, states) {
   } else if (m.pushed >= m.win && m.sValid >= m.minValid && m.sClosed / m.sValid > o.perclos) {
     st = 2;
     if (m.prev !== 2 && m.onEvent) m.onEvent('drowsy', i);
-  } else if (m.turnRun > 0 && (m.turnRun - 1) / HZ >= o.turnSec) {
+  } else if (o.awayOnTurn && m.turnRun > 0 && (m.turnRun - 1) / HZ >= o.turnSec) {
     st = 1;
   }
   states[i] = st; m.prev = st; return st;
@@ -1300,6 +1305,10 @@ function report(s, el) {
     <div class="note">
       · 눈을 뜨고 딴생각하는 건 잡지 못합니다. 이 숫자는 “몰입도”가 아니라 “안 졸고 자리를 지켰나”입니다.<br>
       · 고개를 <b>뒤로</b> 젖히는 자세는 숙인 것과 구분되지 않습니다 (faceH가 양방향으로 줄어듦).<br>
+      · 고개를 옆으로 돌리면 두 눈 사이 거리가 짧아져 faceH가 커집니다. 그러면 고개 숙임 보정이
+        EAR을 깎아, <b>고개 돌린 동안은 졸음이 과하게 잡힙니다.</b> 실측 상관계수 −0.72.<br>
+      · 무엇을 보고 있는지는 구분하지 못합니다. 왼쪽 노트를 보는 것과 딴 데를 보는 것이 같게 찍히므로,
+        고개 돌림은 기본적으로 이탈로 세지 않습니다.<br>
       · PERCLOS는 60초 창이라 서서히 졸기 시작하면 판정이 40~50초 늦습니다. 즉시 대응은 1.5초 마이크로슬립 경로가 담당합니다.<br>
       · 탭이 가려진 구간의 수치는 신뢰할 수 없습니다.<br>
       · 안경 반사·어두운 조명·카메라가 눈높이보다 많이 낮으면 EAR 신뢰도가 떨어집니다.
@@ -1312,7 +1321,11 @@ function report(s, el) {
               ['perclos', 'PERCLOS 임계', 0.05, 0.40, 0.01],
               ['headComp', '고개 숙임 보정', 0, 1, 0.05],
               ['yawThr', '이탈 판정 폭', 0.15, 1.20, 0.05]];
-  q('fsSliders').innerHTML = SL.map(([k, n, mn, mx, st]) =>
+  q('fsSliders').innerHTML =
+    `<label style="display:flex;gap:7px;align-items:center;margin:6px 0 12px;font-size:12px">
+      <input type="checkbox" id="fsAwayOn"${o.awayOnTurn ? ' checked' : ''}> 고개 돌림을 이탈로 셈
+      <span class="note">(끄면 자리를 비운 것만 셉니다)</span></label>` +
+    SL.map(([k, n, mn, mx, st]) =>
     `<div class="sld"><span>${n}</span>
       <input type="range" id="fsl_${k}" min="${mn}" max="${mx}" step="${st}" value="${o[k]}">
       <b id="fsv_${k}">${o[k].toFixed(2)}</b></div>`).join('');
@@ -1321,6 +1334,7 @@ function report(s, el) {
   };
   q('fsReset').onclick = () => {
     for (const [k] of SL) { o[k] = DEFAULTS[k]; q('fsl_' + k).value = o[k]; q('fsv_' + k).textContent = o[k].toFixed(2); }
+    o.awayOnTurn = DEFAULTS.awayOnTurn; q('fsAwayOn').checked = o.awayOnTurn;
     paint();
   };
   // 이탈 오탐의 근본 수정 — 판정 폭이 아니라 중심을 실제 자습 자세로 옮긴다.
@@ -1336,6 +1350,7 @@ function report(s, el) {
       (saved ? '저장됨. 다음 세션부터 적용됩니다.' : '<b>저장 실패</b> — 이 리포트에만 반영됩니다.');
     paint();
   };
+  q('fsAwayOn').onchange = e => { o.awayOnTurn = e.target.checked; paint(); };
   q('fsCsv').onclick = () => exportCSV(s, o);
   q('fsJson').onclick = () => exportJSON(s, o);
 
@@ -1404,6 +1419,15 @@ function report(s, el) {
       }).join('') + `</table>` : '<div class="note">없음</div>';
 
     // 이탈 구간 — 언제, 얼마나 돌아갔는지. 오탐이면 여기 편차가 임계선 언저리에 몰려 있다.
+    if (!o.awayOnTurn) {
+      q('fsAway').innerHTML = '<div class="note">고개 돌림을 이탈로 세지 않는 설정입니다. ' +
+        '자리를 실제로 비운 것은 <b>자리비움</b>으로 따로 셉니다. ' +
+        '아래 <b>고개 돌림을 이탈로 셈</b>을 켜면 판정합니다.</div>';
+      drawYawHist(q('fsYaw'), s, o);
+      q('fsYawNote').innerHTML = yawNote(s, o);
+      q('fsFit').innerHTML = calFit(s, o);
+      return;
+    }
     const aw = mergeSegs(segments(states, 1), 5, 1.0);
     q('fsAway').innerHTML = aw.length ? `<table>
       <tr><th>시각</th><th>세션 경과</th><th>길이</th><th>평균 고개 편차</th><th>최대</th></tr>` +
@@ -1500,9 +1524,14 @@ function runTests() {
     T(5, '깊은 필기 자세 (faceH 0.93, EAR 0.12) 2분 — 가장 중요', f1 === 120 && d0 === 120,
       `headComp=1 → 집중 ${f1}초 (기대 120) / headComp=0 → 졸음 ${d0}초 (기대 120)`); }
 
-  { const st = rejudge(synth(10 * HZ, () => ({ ear: OPEN, yaw: 0.9 }), cal), {});
-    T(6, 'yawLog 0.9 유지 10초', secOf(st, 0) === 3.0 && secOf(st, 1) === 7.0,
-      `집중 ${secOf(st,0).toFixed(1)}초 / 이탈 ${secOf(st,1).toFixed(1)}초 (기대 3.0 / 7.0)`); }
+  { const s = synth(10 * HZ, () => ({ ear: OPEN, yaw: 0.9 }), cal);
+    const on = rejudge(s, { awayOnTurn: true });
+    T(6, 'yawLog 0.9 유지 10초 — 규칙을 켰을 때', secOf(on, 0) === 3.0 && secOf(on, 1) === 7.0,
+      `집중 ${secOf(on,0).toFixed(1)}초 / 이탈 ${secOf(on,1).toFixed(1)}초 (기대 3.0 / 7.0)`);
+    const off = rejudge(s, {});
+    T('6b', '기본값에서는 고개 돌림을 이탈로 세지 않는다',
+      secOf(off, 1) === 0 && secOf(off, 0) === 10.0,
+      `이탈 ${secOf(off,1).toFixed(1)}초 (기대 0) / 집중 ${secOf(off,0).toFixed(1)}초 (기대 10.0)`); }
 
   { const st = rejudge(synth(40 * HZ, i => i < 100 ? { ear: OPEN } : { ok: 0 }, cal), {});
     T(7, '얼굴 소실 30초', secOf(st, 3) === 20.0 && secOf(st, 0) === 20.0,
