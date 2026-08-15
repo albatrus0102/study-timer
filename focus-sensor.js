@@ -592,6 +592,11 @@ async function openCamera() {
 /** 프레임 1회 추론. 영상은 저장하지 않고 지표만 남긴다. */
 function detectNow() {
   if (!landmarker || !video || !video.videoWidth) return null;
+  // 탭이 가려지면 브라우저가 그 탭의 비디오 프레임 공급을 멈춘다. 이건 카메라 고장이
+  // 아니라 정상 동작이다. 이걸 "얼었다"로 오판하면 복구한답시고 트랙을 정지시켜
+  // 초록 LED 가 꺼지고, 5초마다 껐다 켰다를 반복하게 된다.
+  // 어차피 가려진 구간은 hidden 범위로 이미 "측정 불가" 처리된다.
+  if (document.hidden) return null;
   if (video.currentTime === lastVideoTime) {
     // 같은 프레임 재사용은 10Hz 샘플링 / 15fps 카메라라 정상이다. 다만 몇 초씩
     // 안 바뀌면 화면이 언 것이므로, 낡은 지표를 되풀이하지 않고 소실로 처리한다.
@@ -766,7 +771,9 @@ function tick() {
     "한 번 걸어두고 잊는" 방식은 쓸 수 없다. */
 function maintain() {
   const now = performance.now();
-  if (!health.ok && !paused && !reopening && now - lastReopen > REOPEN_EVERY_MS) {
+  // 가려진 동안은 복구를 시도하지 않는다. 프레임이 멈춘 게 정상이라 고칠 게 없고,
+  // 트랙을 껐다 켜면 LED 만 깜빡이면서 워밍업 구간이 계속 쌓인다.
+  if (!document.hidden && !health.ok && !paused && !reopening && now - lastReopen > REOPEN_EVERY_MS) {
     lastReopen = now; reopening = true;
     const engineDead = inferFailRun >= 10;
     Promise.resolve()
@@ -823,6 +830,10 @@ function onVis() {
       h[1] = Math.max(h[0], nowIdx - 1);
     }
     if (mach) { machReset(mach); mach.hp = 0; }   // 가려진 동안의 잔여 상태는 못 믿는다
+    // 가려진 동안 프레임이 멈춰 있었으므로, 복귀 직후 곧바로 "얼었다"로 판정하지
+    // 않도록 프레임 시계를 다시 맞춘다.
+    lastFrameAt = performance.now();
+    if (camFail === '카메라 화면이 멈췄습니다') { camFail = null; setHealth(true, null); }
     requestWake();
   }
 }
