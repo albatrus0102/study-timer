@@ -16,7 +16,7 @@
 
 // 배포할 때마다 올린다. 캐시된 옛 코드가 도는지 화면에서 바로 확인하려는 용도.
 // sw.js 의 CACHE_NAME 과 같은 번호를 쓴다.
-const VERSION = 'v21';
+const VERSION = 'v22';
 
 const HZ = 10, SAMPLE_MS = 1000 / HZ;
 
