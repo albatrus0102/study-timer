@@ -14,6 +14,10 @@
    ══════════════════════════════════════════════════════════════════ */
 (function (global) {
 
+// 배포할 때마다 올린다. 캐시된 옛 코드가 도는지 화면에서 바로 확인하려는 용도.
+// sw.js 의 CACHE_NAME 과 같은 번호를 쓴다.
+const VERSION = 'v21';
+
 const HZ = 10, SAMPLE_MS = 1000 / HZ;
 
 // 사양서가 지정한 0.10.22 는 npm 에 존재하지 않는다 (0.10.21 다음이 0.10.32).
@@ -1672,7 +1676,7 @@ function runTests() {
 
 /* ─────────────────── 공개 인터페이스 ─────────────────── */
 global.FocusSensor = {
-  HZ, STATE, COLOR, CHECKS, DEFAULTS, EXCLUDED,
+  VERSION, HZ, STATE, COLOR, CHECKS, DEFAULTS, EXCLUDED,
   init, calibrate, start, pause, resume, stop, report, snapshot,
   abortCalibration: () => calAbort && calAbort(),
   get ready() { return ready; },
