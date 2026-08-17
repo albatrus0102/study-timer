@@ -16,7 +16,7 @@
 
 // 배포할 때마다 올린다. 캐시된 옛 코드가 도는지 화면에서 바로 확인하려는 용도.
 // sw.js 의 CACHE_NAME 과 같은 번호를 쓴다.
-const VERSION = 'v25';
+const VERSION = 'v26';
 
 const HZ = 10, SAMPLE_MS = 1000 / HZ;
 
@@ -132,9 +132,22 @@ function metricsFrom(lm, W, H) {
 }
 
 /* 고개 숙임 보정 (§5.3) — faceH는 보정 계수로만 쓴다 */
+/** 고개 숙임 보정 (§5.3 확장)
+ *
+ * 사양서는 EAR 과 faceH 가 둘 다 cos(pitch) 에 비례한다고 보고 EAR/r 을 쓴다(지수 1).
+ * 그런데 실측하면 훨씬 가파르다 — 한 사용자의 18분 세션에서 faceH 0.83~1.32 사이
+ * EAR p80 이 0.107 → 0.314 로 움직였고, 로그-로그 기울기가 2.58 이었다.
+ * 원근만이 아니라 시선이 내려가면 눈꺼풀이 실제로 내려오는 몫이 겹치기 때문이다.
+ * 지수 1 로 보정하면 주로 쓰는 자세에서 29% 가 판정선 아래로 떨어져(정상 깜빡임은
+ * 6~7%) PERCLOS 15% 를 상시 초과했다. 지수를 캘리브레이션에서 추정하면
+ * 모든 자세의 감김 비율이 8% 로 균일해진다.
+ *
+ * cal.headExp 가 없으면 1.0 — 사양서 원식과 같아서 옛 세션도 그대로 재현된다.
+ */
 function earAdjust(ear, faceH, cal, headComp) {
   const r = clamp(faceH / cal.faceH, 0.55, 1.15);
-  return ear * (1 + headComp * (1 / r - 1));
+  const k = (cal && cal.headExp) ? cal.headExp : 1.0;
+  return ear * Math.pow(1 / r, headComp * k);
 }
 function opennessOf(earAdj, cal) {
   const sp = cal.earOpen - cal.earClosed;
@@ -711,6 +724,39 @@ function calibrate(onProgress) {
     calAbort = () => done({ error: '중단됨' });
   });
 }
+/** A단계에서 모은 (faceH, EAR) 로 EAR ∝ faceH^k 의 k 를 추정한다.
+ *  자세 범위가 좁으면 못 믿으므로 사양서 기본값 1.0 으로 떨어진다.
+ *  감김 샘플에 끌려가지 않도록 구간마다 상위 20% 값(뜬 눈 대표)을 쓴다. */
+function fitHeadExp(faceHs, ears) {
+  const pairs = [];
+  for (let i = 0; i < faceHs.length; i++) {
+    if (isFinite(faceHs[i]) && isFinite(ears[i]) && faceHs[i] > 0.1 && ears[i] > 0.005)
+      pairs.push([faceHs[i], ears[i]]);
+  }
+  if (pairs.length < 100) return 1.0;
+  pairs.sort((a, b) => a[0] - b[0]);
+  const lo = pairs[Math.floor(pairs.length * 0.1)][0];
+  const hi = pairs[Math.floor(pairs.length * 0.9)][0];
+  if (hi / lo < 1.15) return 1.0;              // 자세가 거의 안 변했으면 추정 불가
+
+  const NB = 5, per = Math.floor(pairs.length / NB), pts = [];
+  for (let b = 0; b < NB; b++) {
+    const seg = pairs.slice(b * per, (b + 1) * per);
+    if (seg.length < 20) continue;
+    const fs = seg.map(x => x[0]).sort((a, c) => a - c);
+    const es = seg.map(x => x[1]).sort((a, c) => a - c);
+    pts.push([fs[Math.floor(fs.length / 2)], es[Math.floor(es.length * 0.8)]]);
+  }
+  if (pts.length < 3) return 1.0;
+  const lx = pts.map(p => Math.log(p[0])), ly = pts.map(p => Math.log(p[1]));
+  const mx = lx.reduce((a, b) => a + b, 0) / lx.length;
+  const my = ly.reduce((a, b) => a + b, 0) / ly.length;
+  let num = 0, den = 0;
+  for (let i = 0; i < lx.length; i++) { num += (lx[i] - mx) * (ly[i] - my); den += (lx[i] - mx) ** 2; }
+  if (den < 1e-9) return 1.0;
+  return clamp(num / den, 1.0, 3.5);           // 1 미만은 물리적으로 말이 안 되고, 과보정도 막는다
+}
+
 function finishCal(acc) {
   const [A, B, C] = acc;
   const okRate = (A.ok + B.ok + C.ok) / (A.n + B.n + C.n);
@@ -735,6 +781,7 @@ function finishCal(acc) {
     mar: median(A.mar),
     at: Date.now(), okRate
   };
+  cal.headExp = fitHeadExp(A.faceH, A.ear);
   const sep = cal.earOpen - cal.earClosed;
   cal.sep = sep;
   cal.earThr = cal.earClosed + DEFAULTS.earFrac * sep;
@@ -1221,6 +1268,9 @@ function calFit(s, o) {
       '자세가 다르면 이 값도 달라집니다'],
     ['<b>기준 자세로 환산한 EAR</b>', `<b>${s.cal.earOpen.toFixed(3)}</b>`, `<b>${mNorm.toFixed(3)}</b>`,
       `<b>${(fit * 100).toFixed(0)}%</b> — 100%에 가까울수록 잘 맞음`],
+    ['보정 지수 (EAR ∝ faceH^k)', (s.cal.headExp || 1.0).toFixed(2), '—',
+      (s.cal.headExp && s.cal.headExp > 1.3) ? '캘리브레이션에서 추정됨'
+        : '<span style="color:#d8b878">1.0 — 자세 변화가 적어 추정 못 함</span>'],
     ['분리도 (뜬 눈 − 감은 눈)', s.cal.sep != null ? s.cal.sep.toFixed(3) : '—', '—',
       (s.cal.sep != null && s.cal.sep < 0.06) ? '<span style="color:#d8b878">여유가 적음</span>' : '충분'],
     ['보정 상한에 걸린 샘플', '—', `${(clampRate * 100).toFixed(0)}%`,
@@ -1305,6 +1355,10 @@ function report(s, el) {
     document.head.appendChild(st);
   }
   const o = Object.assign({}, DEFAULTS);
+  o.headExp = (s.cal && s.cal.headExp) ? s.cal.headExp : 1.0;
+  // 슬라이더로 지수를 바꿔볼 수 있게, 판정에 쓰는 cal 을 세션 원본과 분리해 둔다.
+  const baseCal = s.cal;
+  const withExp = () => Object.assign({}, baseCal, { headExp: o.headExp });
   el.innerHTML = `<div class="fsr">
     <div class="sub" id="fsMeta"></div>
     <div id="fsWarn"></div>
@@ -1350,6 +1404,7 @@ function report(s, el) {
   const SL = [['earFrac', '눈 감김 판정선', 0.10, 0.60, 0.01],
               ['perclos', 'PERCLOS 임계', 0.05, 0.40, 0.01],
               ['headComp', '고개 숙임 보정', 0, 1, 0.05],
+              ['headExp', '보정 강도(지수)', 1.0, 3.5, 0.1],
               ['yawThr', '이탈 판정 폭', 0.15, 1.20, 0.05]];
   q('fsSliders').innerHTML =
     `<label style="display:flex;gap:7px;align-items:center;margin:6px 0 12px;font-size:12px">
@@ -1365,6 +1420,8 @@ function report(s, el) {
   q('fsReset').onclick = () => {
     for (const [k] of SL) { o[k] = DEFAULTS[k]; q('fsl_' + k).value = o[k]; q('fsv_' + k).textContent = o[k].toFixed(2); }
     o.awayOnTurn = DEFAULTS.awayOnTurn; q('fsAwayOn').checked = o.awayOnTurn;
+    o.headExp = (baseCal && baseCal.headExp) ? baseCal.headExp : 1.0;
+    q('fsl_headExp').value = o.headExp; q('fsv_headExp').textContent = o.headExp.toFixed(2);
     paint();
   };
   // 이탈 오탐의 근본 수정 — 판정 폭이 아니라 중심을 실제 자습 자세로 옮긴다.
@@ -1386,6 +1443,7 @@ function report(s, el) {
 
   function paint() {
     const t = performance.now();
+    s.cal = withExp();                 // 슬라이더 지수를 반영해 재판정
     const states = rejudge(s, o);
     const ms = performance.now() - t;
     const r = stats(states), sec = i => i / HZ;
@@ -1711,6 +1769,32 @@ function runTests() {
     let diff = 0; for (let i = 0; i < n; i++) if (batch[i] !== live[i]) diff++;
     T(17, '임계선 언저리에서 실시간 == 사후 (양자화 일치)', diff === 0,
       `불일치 ${diff}개 / ${n} · 원본 0.1316 → 저장 ${Math.round(0.1316*1000)} · 판정선 ${earThr.toFixed(3)}`); }
+
+  // 보정 지수 — 실측 세션에서 나온 문제를 그대로 고정한다.
+  // 값은 실제 사용자 캘리브레이션(earOpen 0.159 / earClosed 0.064 / faceH 1.05,
+  // 판정선 0.0828)과 그 세션의 숙인 자세(faceH 0.95, 뜬 눈 EAR 0.070)를 쓴다.
+  // 지수 1 로는 이 "뜬 눈"이 판정선 아래로 떨어져 필기 자세가 통째로 졸음이 됐다.
+  {
+    const rc = { earOpen: 0.159, earClosed: 0.064, faceH: 1.05, faceHFront: 1.39,
+                 yawLog: 0, mar: 0.03, sep: 0.095, earThr: 0.0828 };
+    const awake = () => ({ ear: 0.070, faceH: 0.95 });
+    const c1 = Object.assign({}, rc, { headExp: 1.0 });
+    const c26 = Object.assign({}, rc, { headExp: 2.6 });
+    const d1 = secOf(rejudge(synth(120 * HZ, awake, c1), {}), 2);
+    const d26 = secOf(rejudge(synth(120 * HZ, awake, c26), {}), 2);
+    T(18, '숙인 자세(faceH 0.95)의 뜬 눈 — 지수 보정이 졸음 오판을 막는다',
+      d26 === 0 && d1 > 60,
+      `지수 1.0 → 졸음 ${d1.toFixed(0)}초 (오판) / 지수 2.6 → ${d26.toFixed(0)}초 (기대 0)`);
+
+    // 지수를 올려도 진짜 감김은 그대로 잡혀야 한다. 안 그러면 오탐만 줄이고 본질을 잃는다.
+    const a = 100 * HZ;
+    const mixed = i => (i >= a && i < a + 50) ? { ear: 0.045, faceH: 0.95 } : awake();
+    const sg = segments(rejudge(synth(180 * HZ, mixed, c26), {}), 2);
+    const len = sg.length ? (sg[0][1] - sg[0][0] + 1) / HZ : 0;
+    T('18b', '지수 보정 상태에서도 5초 감김은 정확히 잡힌다',
+      sg.length === 1 && len === 5.0 && sg[0][0] === a,
+      `구간 ${sg.length}개, 길이 ${len.toFixed(1)}초 (기대 5.0), 시작 ${sg.length ? sg[0][0] : '-'} (기대 ${a})`);
+  }
 
   const pass = R.filter(Boolean).length;
   L.push(`\n${pass}/${R.length} 통과`);
