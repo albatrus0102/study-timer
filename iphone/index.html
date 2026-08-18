@@ -1020,7 +1020,9 @@
       addStudyTime(now - lastTickTime);
     }
     if (isStopwatchMode() && mode === "focus") {
-      swElapsedMs += now - swSegmentStart;
+      // 스톱워치는 정지하면 그 블록을 마감한다: 경과 시간은 위에서 이미 오늘 공부시간에
+      // 쌓였으므로, 세션 자체는 00:00으로 되돌려 다음 블록을 새로 시작하게 한다.
+      swElapsedMs = 0;
       swSegmentStart = null;
     } else {
       remainingMs = Math.max(0, endTime - now);

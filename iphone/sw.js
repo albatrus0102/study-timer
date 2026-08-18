@@ -1,7 +1,7 @@
 "use strict";
 
 // 캐시 이름에 버전을 포함해 배포할 때마다 올려주면 구버전 캐시가 자동 정리된다.
-var CACHE_NAME = "pomodoro-iphone-v2";
+var CACHE_NAME = "pomodoro-iphone-v3";
 // 아이폰 오프라인의 생명줄. 하나라도 실패하면 설치가 통째로 깨지므로 최소한만 둔다.
 var PRECACHE_URLS = ["./", "./index.html", "./icon.png"];
 
