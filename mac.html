@@ -610,6 +610,9 @@
   var TICK_MS = 250;
   var PRESET_KEY = "studyTimer_preset";
   var DAY_RESET_HOUR = 2; // "오늘 공부시간"은 매일 새벽 2시에 리셋
+  var SESSION_KEY = "studyTimer_session"; // iOS가 PWA를 통째로 죽여도(화면 잠금·앱 전환) 이어서 복원하기 위한 스냅샷
+  var SESSION_MAX_GAP_MS = 4 * 60 * 60 * 1000; // 이보다 오래 떠나 있었으면 이어받지 않고 초기 상태로
+  var SESSION_SAVE_THROTTLE_MS = 5000; // tick()마다 저장하면 낭비라 스로틀
 
   // focus-duration presets: focus minutes only. break/longBreak are computed dynamically
   // from actual elapsed focus time (see startBreakFromFocus).
@@ -633,6 +636,7 @@
   var overtimeNotified = false; // 이번 집중 세션에서 "목표 시간 완료" 알림을 이미 보냈는지
   var swElapsedMs = 0;          // 스톱워치 모드: 일시정지 구간까지 누적된 경과 시간
   var swSegmentStart = null;    // 스톱워치 모드: 현재 재생 구간이 시작된 시각 (일시정지 중엔 null)
+  var lastSessionSaveAt = 0;    // saveSession() 스로틀용 마지막 저장 시각
 
   // ---------- DOM ----------
   var timerEl = document.getElementById("timer");
@@ -742,8 +746,34 @@
     return dayKeyForOffset(0);
   }
 
+  function dayKeyForTimestamp(ts) {
+    return dayKeyFromDate(new Date(ts - DAY_RESET_HOUR * 60 * 60 * 1000));
+  }
+
   function getStoredStudyMs() {
     return totalStudyMsForKey(todayKey());
+  }
+
+  // ---- 배터리 최적화: 공부시간을 매 tick마다 디스크에 쓰지 않고 모았다 쓴다 ----
+  var STUDY_FLUSH_MS = 5000;
+  var pendingStudyMs = 0;
+  var lastStudyFlushAt = 0;
+
+  // tick 전용: 메모리에만 쌓고, 5초에 한 번만 실제 저장한다.
+  function accrueStudyTime(deltaMs) {
+    if (deltaMs <= 0) return;
+    pendingStudyMs += deltaMs;
+    var now = Date.now();
+    if (now - lastStudyFlushAt >= STUDY_FLUSH_MS) flushStudyTime();
+  }
+
+  // 쌓아둔 시간을 즉시 저장한다 (세션 전환·일시정지·앱 종료 직전 등).
+  function flushStudyTime() {
+    lastStudyFlushAt = Date.now();
+    if (pendingStudyMs <= 0) return;
+    var d = pendingStudyMs;
+    pendingStudyMs = 0;
+    addStudyTime(d);
   }
 
   function addStudyTime(deltaMs) {
@@ -774,6 +804,7 @@
     return "휴식";
   }
 
+  var lastRenderedClock = null, lastRenderedLabel = null;
   function updateDisplay() {
     var clock, label;
     if (isStopwatchMode() && mode === "focus") {
@@ -789,9 +820,14 @@
       clock = formatClock(msToShow);
       label = modeLabelText(mode);
     }
-    timerEl.textContent = clock;
-    modeLabelEl.textContent = label;
-    document.title = clock + " · " + label;
+    // 화면 글자가 실제로 바뀔 때만 다시 그린다 (탭 제목 갱신은 특히 비싸다)
+    if (clock !== lastRenderedClock || label !== lastRenderedLabel) {
+      lastRenderedClock = clock;
+      lastRenderedLabel = label;
+      timerEl.textContent = clock;
+      modeLabelEl.textContent = label;
+      document.title = clock + " · " + label;
+    }
     startPauseBtn.textContent = isOvertime() ? "휴식 시작" : (running ? "정지" : "시작");
   }
 
@@ -1176,6 +1212,7 @@
     resumeMusicForFocus();
     updateDisplay();
     focusOnTimerChange();
+    saveSession();
   }
 
   function pause() {
@@ -1183,7 +1220,7 @@
     var now = Date.now();
     // account any elapsed focus time up to this moment
     if (mode === "focus" && lastTickTime) {
-      addStudyTime(now - lastTickTime);
+      accrueStudyTime(now - lastTickTime); flushStudyTime();
     }
     if (isStopwatchMode() && mode === "focus") {
       swElapsedMs += now - swSegmentStart;
@@ -1194,6 +1231,7 @@
     running = false;
     updateDisplay();
     focusOnTimerChange();
+    saveSession();
   }
 
   // 카운트다운 중(초과 전)에는 일시정지/재개. 초과(overtime) 상태에서는
@@ -1224,6 +1262,7 @@
     lastTickTime = null;
     updateDisplay();
     focusOnTimerChange();
+    saveSession();
   }
 
   // 집중 → 휴식으로 전환한다. 실제 집중 경과 시간(focusElapsedMs, 초과분 포함)을 기준으로
@@ -1232,7 +1271,7 @@
   function startBreakFromFocus(keepRunning) {
     var now = Date.now();
     if (running && mode === "focus" && lastTickTime) {
-      addStudyTime(now - lastTickTime);
+      accrueStudyTime(now - lastTickTime); flushStudyTime();
     }
 
     var elapsedMs = focusElapsedMs(now);
@@ -1269,6 +1308,7 @@
     updateDisplay();
     focusOnTimerChange();
     syncStats(true);
+    saveSession();
   }
 
   // 휴식 → 집중 대기 상태로 전환한다. 자동으로 집중을 시작하지 않고 탭/시작 버튼을 기다린다.
@@ -1289,6 +1329,7 @@
     updateDisplay();
     focusOnTimerChange();
     syncStats(true);
+    saveSession();
   }
 
   function skip() {
@@ -1333,6 +1374,7 @@
     // 프리셋 변경은 running=false 로 만든다. 훅이 없으면 타이머는 멈춘 채
     // 센서만 계속 돌아, 쉬는 시간이 집중 세션에 그대로 쌓인다.
     focusOnTimerChange();
+    saveSession();
   }
 
   // ---------- Custom focus duration ----------
@@ -1393,9 +1435,14 @@
     if (!running) return;
     var now = Date.now();
     if (mode === "focus" && lastTickTime) {
-      addStudyTime(now - lastTickTime);
+      accrueStudyTime(now - lastTickTime);
     }
     lastTickTime = now;
+
+    if (now - lastSessionSaveAt >= SESSION_SAVE_THROTTLE_MS) {
+      lastSessionSaveAt = now;
+      saveSession();
+    }
 
     if (isStopwatchMode() && mode === "focus") {
       updateDisplay();
@@ -1421,6 +1468,134 @@
       return;
     }
     updateDisplay();
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 세션 상태 저장·복원
+  //
+  // iOS는 PWA를 백그라운드로 보내면(화면 잠금·앱 전환) 몇 초~몇 분 안에 탭을
+  // 통째로 죽인다. 메모리 상태(mode/running/endTime/...)가 전부 날아가므로
+  // localStorage에 스냅샷을 남겨 두고, 다시 열릴 때(init) 이어서 복원한다.
+  // ══════════════════════════════════════════════════════════════════
+  function saveSession() {
+    try {
+      var now = Date.now();
+      var swElapsedNow = swElapsedMs;
+      if (isStopwatchMode() && mode === "focus" && running && swSegmentStart) {
+        swElapsedNow = swElapsedMs + (now - swSegmentStart);
+      }
+      var snapshot = {
+        v: 1,
+        presetKey: currentPresetKey,
+        mode: mode,
+        running: running,
+        endTime: endTime,
+        remainingMs: remainingMs,
+        accumFocusMin: accumFocusMin,
+        currentBreakMs: currentBreakMs,
+        overtimeNotified: overtimeNotified,
+        swElapsedMs: swElapsedNow,
+        savedAt: now
+      };
+      localStorage.setItem(SESSION_KEY, JSON.stringify(snapshot));
+    } catch (e) {
+      // ignore storage errors silently
+    }
+  }
+
+  // 앱이 사라지기 직전(pagehide) 또는 가려지는 순간(hidden)에 호출.
+  // 마지막 tick 이후의 공부시간을 여기서 적립해 두면, 복원 시 gap을 다시
+  // 더해도 중복 계산이 되지 않는다 (savedAt까지는 이미 반영된 값이므로).
+  function flushAndSave() {
+    try {
+      var now = Date.now();
+      if (running && mode === "focus" && lastTickTime) {
+        accrueStudyTime(now - lastTickTime); flushStudyTime();
+        lastTickTime = now;
+      }
+      saveSession();
+    } catch (e) {
+      // ignore errors silently
+    }
+  }
+
+  window.addEventListener("pagehide", flushAndSave);
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") flushAndSave();
+  });
+
+  // init()에서, 프리셋 복원 뒤에 호출된다.
+  function restoreSession() {
+    try {
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return;
+      var snap = JSON.parse(raw);
+      if (!snap || snap.v !== 1) return;
+
+      // 프리셋이 그 사이 바뀌었으면(다른 기기·다른 탭 등) 정합성이 깨지므로 무시
+      if (snap.presetKey !== currentPresetKey) {
+        localStorage.removeItem(SESSION_KEY);
+        return;
+      }
+
+      var now = Date.now();
+      var gap = Math.max(0, now - snap.savedAt);
+
+      // 너무 오래 떠나 있었으면(밤새 방치 등) 이어받지 않는다
+      if (gap > SESSION_MAX_GAP_MS) {
+        localStorage.removeItem(SESSION_KEY);
+        return;
+      }
+
+      mode = snap.mode;
+      accumFocusMin = snap.accumFocusMin || 0;
+      currentBreakMs = snap.currentBreakMs;
+      overtimeNotified = !!snap.overtimeNotified;
+      swElapsedMs = snap.swElapsedMs || 0;
+
+      if (!snap.running) {
+        // 멈춰 있던 그대로 복원 — 시간은 흐르지 않는다
+        remainingMs = snap.remainingMs;
+        running = false;
+        endTime = null;
+        lastTickTime = null;
+        return;
+      }
+
+      // 저장 당시 돌아가고 있었다 — 그 사이 실제로 시간이 흐른 것으로 취급
+      if (mode === "break" || mode === "longBreak") {
+        if (snap.endTime != null && snap.endTime <= now) {
+          // 떠나 있는 동안 휴식이 이미 끝났다 — 집중 대기 상태로 (알림 없음, 이미 지난 일)
+          goToFocusWaiting(false);
+          return;
+        }
+        endTime = snap.endTime;
+        running = true;
+        lastTickTime = now;
+        if (!intervalId) intervalId = setInterval(tick, TICK_MS);
+        return;
+      }
+
+      // mode === "focus"
+      // savedAt까지는 flushAndSave()에서 이미 적립되어 있으므로, gap만 추가로 적립하면
+      // 중복 없이 이어진다. 단, 날짜 경계(새벽 2시)를 넘겼으면 어제/오늘 어느 쪽에도
+      // 애매하게 걸치므로 안전하게 생략한다.
+      if (dayKeyForTimestamp(snap.savedAt) === dayKeyForTimestamp(now)) {
+        addStudyTime(gap);
+      }
+
+      if (isStopwatchMode()) {
+        swElapsedMs = (snap.swElapsedMs || 0) + gap;
+        swSegmentStart = now;
+      } else {
+        endTime = snap.endTime;
+      }
+      running = true;
+      lastTickTime = now;
+      if (!intervalId) intervalId = setInterval(tick, TICK_MS);
+    } catch (e) {
+      // ignore corrupted session data silently
+    }
   }
 
   // ---------- Blackout ----------
@@ -1865,8 +2040,11 @@
     remainingMs = isStopwatchMode() ? 0 : durationForMode(mode);
     updatePresetButtonsUI();
 
+    restoreSession();
+
     renderStudyTime(getStoredStudyMs());
     updateDisplay();
+    focusOnTimerChange();
 
     // prefill the music url input (auto-remember default playlist when nothing saved yet),
     // but do NOT load the YouTube API or start any playback until the user acts.

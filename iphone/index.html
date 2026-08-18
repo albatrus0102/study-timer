@@ -573,6 +573,28 @@
     return totalStudyMsForKey(todayKey());
   }
 
+  // ---- 배터리 최적화: 공부시간을 매 tick마다 디스크에 쓰지 않고 모았다 쓴다 ----
+  var STUDY_FLUSH_MS = 5000;
+  var pendingStudyMs = 0;
+  var lastStudyFlushAt = 0;
+
+  // tick 전용: 메모리에만 쌓고, 5초에 한 번만 실제 저장한다.
+  function accrueStudyTime(deltaMs) {
+    if (deltaMs <= 0) return;
+    pendingStudyMs += deltaMs;
+    var now = Date.now();
+    if (now - lastStudyFlushAt >= STUDY_FLUSH_MS) flushStudyTime();
+  }
+
+  // 쌓아둔 시간을 즉시 저장한다 (세션 전환·일시정지·앱 종료 직전 등).
+  function flushStudyTime() {
+    lastStudyFlushAt = Date.now();
+    if (pendingStudyMs <= 0) return;
+    var d = pendingStudyMs;
+    pendingStudyMs = 0;
+    addStudyTime(d);
+  }
+
   function addStudyTime(deltaMs) {
     if (deltaMs <= 0) return;
     var key = "studyTime_" + todayKey();
@@ -601,6 +623,7 @@
     return "휴식";
   }
 
+  var lastRenderedClock = null, lastRenderedLabel = null;
   function updateDisplay() {
     var clock, label;
     if (isStopwatchMode() && mode === "focus") {
@@ -616,9 +639,14 @@
       clock = formatClock(msToShow);
       label = modeLabelText(mode);
     }
-    timerEl.textContent = clock;
-    modeLabelEl.textContent = label;
-    document.title = clock + " · " + label;
+    // 화면 글자가 실제로 바뀔 때만 다시 그린다 (탭 제목 갱신은 특히 비싸다)
+    if (clock !== lastRenderedClock || label !== lastRenderedLabel) {
+      lastRenderedClock = clock;
+      lastRenderedLabel = label;
+      timerEl.textContent = clock;
+      modeLabelEl.textContent = label;
+      document.title = clock + " · " + label;
+    }
   }
 
   // ---------- GitHub Sync ----------
@@ -1017,7 +1045,7 @@
     var now = Date.now();
     // account any elapsed focus time up to this moment
     if (mode === "focus" && lastTickTime) {
-      addStudyTime(now - lastTickTime);
+      accrueStudyTime(now - lastTickTime); flushStudyTime();
     }
     if (isStopwatchMode() && mode === "focus") {
       // 스톱워치는 정지하면 그 블록을 마감한다: 경과 시간은 위에서 이미 오늘 공부시간에
@@ -1070,7 +1098,7 @@
   function startBreakFromFocus(keepRunning) {
     var now = Date.now();
     if (running && mode === "focus" && lastTickTime) {
-      addStudyTime(now - lastTickTime);
+      accrueStudyTime(now - lastTickTime); flushStudyTime();
     }
 
     var elapsedMs = focusElapsedMs(now);
@@ -1230,7 +1258,7 @@
     if (!running) return;
     var now = Date.now();
     if (mode === "focus" && lastTickTime) {
-      addStudyTime(now - lastTickTime);
+      accrueStudyTime(now - lastTickTime);
     }
     lastTickTime = now;
 
@@ -1305,7 +1333,7 @@
     try {
       var now = Date.now();
       if (running && mode === "focus" && lastTickTime) {
-        addStudyTime(now - lastTickTime);
+        accrueStudyTime(now - lastTickTime); flushStudyTime();
         lastTickTime = now;
       }
       saveSession();
