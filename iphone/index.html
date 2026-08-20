@@ -657,7 +657,21 @@
   var GITHUB_API_URL = "https://api.github.com/repos/" + GITHUB_OWNER + "/" + GITHUB_REPO + "/contents/" + GITHUB_PATH;
   var TOKEN_KEY = "studyTimer_ghToken";
   var REMOTE_DEVICES_KEY = "studyTimer_remoteDevices";
-  var DEVICE_ID = "phone";
+  // 기기 식별자. 세 버전(맥/아이패드/아이폰)이 같은 주소를 쓰기 때문에, 한 기기 안에서는
+  // localStorage 가 공유된다 — 그래서 여기에 한 번 정해두면 어느 버전을 열든 같은 칸에
+  // 기록된다. (예전처럼 페이지마다 이름을 박아두면 같은 공부 시간이 mac/phone 두 칸에
+  // 중복으로 올라간다.) 처음 실행하는 버전의 기본 이름을 그 기기의 이름으로 굳힌다.
+  var DEVICE_ID = (function () {
+    var FALLBACK = "phone";
+    try {
+      var k = "studyTimer_deviceId";
+      var v = localStorage.getItem(k);
+      if (!v) { v = FALLBACK; localStorage.setItem(k, v); }
+      return v;
+    } catch (e) {
+      return FALLBACK;
+    }
+  })();
   var SYNC_MIN_INTERVAL_MS = 60 * 1000;
   var SYNC_KEEP_DAYS = 60;
 
