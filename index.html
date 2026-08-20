@@ -1035,9 +1035,9 @@
       accrueStudyTime(now - lastTickTime); flushStudyTime();
     }
     if (isStopwatchMode() && mode === "focus") {
-      // 스톱워치는 정지하면 그 블록을 마감한다: 경과 시간은 위에서 이미 오늘 공부시간에
-      // 쌓였으므로, 세션 자체는 00:00으로 되돌려 다음 블록을 새로 시작하게 한다.
-      swElapsedMs = 0;
+      // 정지해도 경과 시간은 그대로 유지한다(일시정지). 실수로 화면을 스쳤을 때
+      // 블록이 사라지지 않도록 — 블록 마감(00:00)은 '건너뛰기'로만 한다.
+      swElapsedMs = swElapsedMs + (swSegmentStart ? (now - swSegmentStart) : 0);
       swSegmentStart = null;
     } else {
       remainingMs = Math.max(0, endTime - now);

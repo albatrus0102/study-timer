@@ -1223,7 +1223,9 @@
       accrueStudyTime(now - lastTickTime); flushStudyTime();
     }
     if (isStopwatchMode() && mode === "focus") {
-      swElapsedMs += now - swSegmentStart;
+      // 정지해도 경과 시간은 그대로 유지한다(일시정지). 실수로 화면을 스쳤을 때
+      // 블록이 사라지지 않도록 — 블록 마감(00:00)은 '건너뛰기'로만 한다.
+      swElapsedMs = swElapsedMs + (swSegmentStart ? (now - swSegmentStart) : 0);
       swSegmentStart = null;
     } else {
       remainingMs = Math.max(0, endTime - now);
