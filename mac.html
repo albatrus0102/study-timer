@@ -393,39 +393,12 @@
   #extSection { margin-top: 6px; }
   #extSection[hidden] { display: none; }
 
-  /* 과목 칩 */
-  #extSubjects { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 11px; }
-  .ext-chip {
-    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
-    color: rgba(255,255,255,0.7); border-radius: 999px; padding: 5px 12px;
-    font: inherit; font-size: 12px; cursor: pointer; line-height: 1.4;
-    display: inline-flex; align-items: center; gap: 5px;
-  }
-  .ext-chip:hover { background: rgba(255,255,255,0.1); }
-  .ext-chip.on {
-    background: #20313f; border-color: #3d6383; color: #cfe4f5;
-  }
-  .ext-chip.add { color: rgba(255,255,255,0.4); border-style: dashed; }
-  .ext-chip .chip-x {
-    color: rgba(255,255,255,0.35); font-size: 13px; line-height: 1; margin-left: 1px;
-  }
-  .ext-chip .chip-x:hover { color: #e07a5f; }
-  #extNewSubject {
-    width: 96px; background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.12); color: #fff; border-radius: 999px;
-    padding: 5px 12px; font: inherit; font-size: 12px;
-  }
-  #extNewSubject:focus { outline: none; border-color: rgba(120,170,220,0.55); }
-  #extEditBtn {
-    background: none; border: none; color: rgba(255,255,255,0.35);
-    font: inherit; font-size: 11px; cursor: pointer; padding: 5px 4px;
-  }
-  #extEditBtn:hover { color: rgba(255,255,255,0.6); }
-
   /* 주간 과목별 */
   #extWeek { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); }
   #extWeek .wk-title { font-size: 11px; color: rgba(255,255,255,0.38); margin-bottom: 8px; }
-  .wk-row { display: flex; align-items: center; gap: 9px; margin: 6px 0; font-size: 12px; }
+  .wk-row { display: flex; align-items: center; gap: 9px; margin: 6px 0; font-size: 12px;
+    cursor: pointer; border-radius: 5px; padding: 2px 4px; margin-left: -4px; }
+  .wk-row:hover { background: rgba(255,255,255,0.05); }
   .wk-row .wk-name { width: 68px; flex: none; color: rgba(255,255,255,0.72); overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
   .wk-row .wk-bar { flex: 1; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
@@ -483,6 +456,7 @@
   }
   #extPreview b { color: #9fd3b0; font-weight: 600; }
   #extPreview.bad { color: rgba(224,122,95,0.85); }
+  #extPreview.fresh b { color: #d8b878; }
   /* 키보드 포커스가 어디 있는지 보이게 한다. 이게 없어서 Tab 이 안 먹는 것처럼 느껴졌다. */
   .ext-chip:focus-visible, .ext-nav:focus-visible, #extAddBtn:focus-visible,
   #extQuick:focus-visible, #extNewSubject:focus-visible, #extEditBtn:focus-visible,
@@ -733,7 +707,6 @@
         <div id="extDateLabel">—</div>
         <button class="ext-nav" id="extNext" title="다음 날">›</button>
       </div>
-      <div id="extSubjects"></div>
       <div class="ext-form">
         <input id="extQuick" type="text" placeholder="국 145" autocomplete="off" maxlength="30">
         <button id="extAddBtn">추가</button>
@@ -2268,7 +2241,7 @@
   // 쿼리를 붙이는 이유: 서비스워커는 페이지 앞단 프록시라 강제 새로고침(⌥⌘R)으로도
   // 못 건너뛴다. 옛 서비스워커가 옛 focus-sensor.js 를 계속 내주는 상황이 반복됐다.
   // 캐시에 없는 주소로 요청하면 옛 서비스워커도 네트워크로 나갈 수밖에 없다.
-  var SENSOR_V = "29";
+  var SENSOR_V = "30";
 
   function loadSensor() {
     if (window.FocusSensor) return Promise.resolve(true);
@@ -2590,12 +2563,10 @@
   // (현재 기기에만 저장된다. 기기 간 동기화는 studyTime_ 만 대상으로 한다)
   // ══════════════════════════════════════════════════════════════════
   var EXT_PREFIX = "studyExt_";
-  var EXT_SUBJECTS_KEY = "studyTimer_subjects";
   var EXT_OPEN_KEY = "studyTimer_extOpen";
   var DEFAULT_SUBJECTS = ["국어", "수학", "영어", "지구", "세지"];
   var extViewOffset = 0;      // 0 = 오늘, 1 = 어제 …
   var extSubject = null;      // 선택된 과목
-  var extEditMode = false;    // 과목 삭제 모드
 
   function extEntriesForKey(key) {
     try {
@@ -2620,24 +2591,24 @@
   // 항목의 과목 이름. 예전에 label 로 저장한 것도 그대로 읽힌다.
   function extNameOf(e) { return e.subject || e.label || "과목 없음"; }
 
+  // 과목 목록을 따로 관리하지 않는다. 기본값 + 최근 30일에 실제로 쓴 것을 합쳐서
+  // 앞글자 매칭 후보로만 쓴다. 목록에 없는 이름도 그냥 추가되며(새 과목),
+  // 오타를 조용히 새 과목으로 만들지 않도록 미리보기에서 다르게 표시한다.
   function extSubjects() {
-    try {
-      var raw = localStorage.getItem(EXT_SUBJECTS_KEY);
-      if (raw) {
-        var arr = JSON.parse(raw);
-        if (Array.isArray(arr)) return arr;
-      }
-    } catch (e) {}
-    return DEFAULT_SUBJECTS.slice();
-  }
-  function extSaveSubjects(arr) {
-    try { localStorage.setItem(EXT_SUBJECTS_KEY, JSON.stringify(arr)); } catch (e) {}
+    var seen = {}, out = [];
+    DEFAULT_SUBJECTS.forEach(function (n) { if (!seen[n]) { seen[n] = 1; out.push(n); } });
+    for (var i = 0; i < 30; i++) {
+      extEntriesForKey(dayKeyForOffset(i)).forEach(function (e) {
+        var n = extNameOf(e);
+        if (n && !seen[n]) { seen[n] = 1; out.push(n); }
+      });
+    }
+    return out;
   }
 
   var extToggleEl = document.getElementById("extToggle");
   var extSectionEl = document.getElementById("extSection");
   var extHeadSumEl = document.getElementById("extHeadSum");
-  var extSubjectsEl = document.getElementById("extSubjects");
   var extPrevBtn = document.getElementById("extPrev");
   var extNextBtn = document.getElementById("extNext");
   var extDateLabel = document.getElementById("extDateLabel");
@@ -2657,79 +2628,6 @@
     if (open) { renderExtPanel(); extQuickInput.focus(); }
   }
 
-  function renderExtChips() {
-    var subs = extSubjects();
-    if (extSubject && subs.indexOf(extSubject) < 0) extSubject = null;
-    if (!extSubject && subs.length) extSubject = subs[0];
-    extSubjectsEl.innerHTML = "";
-
-    subs.forEach(function (name) {
-      var chip = document.createElement("button");
-      chip.className = "ext-chip" + (name === extSubject ? " on" : "");
-      var t = document.createElement("span");
-      t.textContent = name;
-      chip.appendChild(t);
-      if (extEditMode) {
-        var x = document.createElement("span");
-        x.className = "chip-x";
-        x.textContent = "×";
-        chip.appendChild(x);
-      }
-      // 라디오 그룹 패턴 — 묶음 전체가 탭 정지 하나, 안에서는 ← → 로 이동한다.
-      chip.tabIndex = (name === extSubject) ? 0 : -1;
-      chip.onkeydown = function (e) {
-        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-        e.preventDefault(); e.stopPropagation();
-        var list = extSubjects();
-        var i = list.indexOf(name);
-        if (i < 0) return;
-        var next = list[(i + (e.key === "ArrowRight" ? 1 : list.length - 1)) % list.length];
-        extSubject = next;
-        renderExtChips();
-        var el = extSubjectsEl.querySelector(".ext-chip.on");
-        if (el) el.focus();
-      };
-      chip.onclick = function () {
-        if (extEditMode) {
-          var next = extSubjects().filter(function (n) { return n !== name; });
-          extSaveSubjects(next);
-          if (extSubject === name) extSubject = null;
-          renderExtChips();
-        } else {
-          extSubject = name;
-          renderExtChips();
-        }
-      };
-      extSubjectsEl.appendChild(chip);
-    });
-
-    // 새 과목 입력
-    var input = document.createElement("input");
-    input.id = "extNewSubject";
-    input.type = "text";
-    input.placeholder = "+ 과목";
-    input.maxLength = 12;
-    input.onkeydown = function (e) {
-      e.stopPropagation();
-      if (e.key !== "Enter") return;
-      e.preventDefault();
-      var v = (input.value || "").trim();
-      if (!v) return;
-      var subs2 = extSubjects();
-      if (subs2.indexOf(v) < 0) { subs2.push(v); extSaveSubjects(subs2); }
-      extSubject = v;
-      input.value = "";
-      renderExtChips();
-    };
-    extSubjectsEl.appendChild(input);
-
-    var edit = document.createElement("button");
-    edit.id = "extEditBtn";
-    edit.textContent = extEditMode ? "완료" : "편집";
-    edit.onclick = function () { extEditMode = !extEditMode; renderExtChips(); };
-    extSubjectsEl.appendChild(edit);
-  }
-
   function renderExtPanel() {
     var key = extViewKey();
     var d = dateForDayOffset(extViewOffset);
@@ -2738,8 +2636,6 @@
       "<small>" + (extViewOffset === 0 ? "오늘" : extViewOffset + "일 전") + "</small>";
     extNextBtn.disabled = extViewOffset === 0;
     extPrevBtn.disabled = extViewOffset >= 29;
-
-    renderExtChips();
 
     var entries = extEntriesForKey(key);
     extListEl.innerHTML = "";
@@ -2797,11 +2693,19 @@
     var max = totals[names[0]] || 1;
     var html = '<div class="wk-title">최근 7일 과목별 · 합계 ' + formatStudyTime(grand) + '</div>';
     names.forEach(function (n) {
-      html += '<div class="wk-row"><div class="wk-name">' + n + '</div>' +
+      html += '<div class="wk-row" data-subject="' + n.replace(/"/g, "&quot;") + '"><div class="wk-name">' + n + '</div>' +
         '<div class="wk-bar"><i style="width:' + Math.max(3, Math.round(totals[n] / max * 100)) + '%"></i></div>' +
         '<div class="wk-ms">' + formatStudyTime(totals[n]) + '</div></div>';
     });
     extWeekEl.innerHTML = html;
+    // 마우스로도 쓸 수 있게 — 과목을 누르면 입력칸에 채워 넣는다.
+    [].forEach.call(extWeekEl.querySelectorAll(".wk-row"), function (row) {
+      row.onclick = function () {
+        extQuickInput.value = row.dataset.subject + " ";
+        extQuickInput.focus();
+        renderExtPreview();
+      };
+    });
   }
 
   function renderExtHead() {
@@ -2867,6 +2771,7 @@
       timePart = (m[2] || "").trim();
     }
     var subject = extSubject;
+    var isNew = false;
     if (namePart) {
       var subs = extSubjects();
       var hit = null;
@@ -2874,13 +2779,13 @@
       if (!hit) for (var j = 0; j < subs.length; j++) {
         if (subs[j].indexOf(namePart) === 0) { hit = subs[j]; break; }
       }
-      if (!hit) return { error: "‘" + namePart + "’ 과목이 없습니다" };
-      subject = hit;
+      if (hit) subject = hit;
+      else { subject = namePart; isNew = true; }   // 새 과목 — 미리보기에서 구분해 보여준다
     }
     var ms = extParseDuration(timePart);
     if (ms == null) return { error: "시간을 못 읽었습니다" };
     if (ms <= 0) return { error: "0보다 커야 합니다" };
-    return { subject: subject || "과목 없음", ms: ms };
+    return { subject: subject || "과목 없음", ms: ms, isNew: isNew };
   }
 
   function renderExtPreview() {
@@ -2892,8 +2797,9 @@
       extPreviewEl.textContent = (r && r.error) || "읽을 수 없습니다";
       return;
     }
-    extPreviewEl.className = "";
-    extPreviewEl.innerHTML = "<b>" + r.subject + " · " + formatStudyTime(r.ms) + "</b> — Enter 로 추가";
+    extPreviewEl.className = r.isNew ? "fresh" : "";
+    extPreviewEl.innerHTML = "<b>" + r.subject + " · " + formatStudyTime(r.ms) + "</b>" +
+      (r.isNew ? " — <b>새 과목</b>입니다. 맞으면 Enter" : " — Enter 로 추가");
   }
 
   var extLastAdd = null;   // ⌘Z 로 되돌리기
