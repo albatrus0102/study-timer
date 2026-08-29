@@ -376,7 +376,62 @@
   #focusCloseBtn { position: absolute; top: 14px; right: 14px; }
 
   /* ---- 직접 추가한 시간 (열품타 등 외부 기록) ---- */
+  .ext-toggle {
+    display: flex; align-items: center; gap: 7px; cursor: pointer;
+    user-select: none; -webkit-user-select: none;
+  }
+  .ext-toggle:hover { color: rgba(255,255,255,0.75) !important; }
+  .ext-caret {
+    display: inline-block; transition: transform 0.18s ease;
+    font-size: 13px; line-height: 1; color: rgba(255,255,255,0.4);
+  }
+  .ext-toggle.open .ext-caret { transform: rotate(90deg); }
+  #extHeadSum {
+    margin-left: auto; font-size: 11px; color: rgba(255,255,255,0.38);
+    font-variant-numeric: tabular-nums; letter-spacing: 0;
+  }
   #extSection { margin-top: 6px; }
+  #extSection[hidden] { display: none; }
+
+  /* 과목 칩 */
+  #extSubjects { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 11px; }
+  .ext-chip {
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.7); border-radius: 999px; padding: 5px 12px;
+    font: inherit; font-size: 12px; cursor: pointer; line-height: 1.4;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .ext-chip:hover { background: rgba(255,255,255,0.1); }
+  .ext-chip.on {
+    background: #20313f; border-color: #3d6383; color: #cfe4f5;
+  }
+  .ext-chip.add { color: rgba(255,255,255,0.4); border-style: dashed; }
+  .ext-chip .chip-x {
+    color: rgba(255,255,255,0.35); font-size: 13px; line-height: 1; margin-left: 1px;
+  }
+  .ext-chip .chip-x:hover { color: #e07a5f; }
+  #extNewSubject {
+    width: 96px; background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12); color: #fff; border-radius: 999px;
+    padding: 5px 12px; font: inherit; font-size: 12px;
+  }
+  #extNewSubject:focus { outline: none; border-color: rgba(120,170,220,0.55); }
+  #extEditBtn {
+    background: none; border: none; color: rgba(255,255,255,0.35);
+    font: inherit; font-size: 11px; cursor: pointer; padding: 5px 4px;
+  }
+  #extEditBtn:hover { color: rgba(255,255,255,0.6); }
+
+  /* 주간 과목별 */
+  #extWeek { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); }
+  #extWeek .wk-title { font-size: 11px; color: rgba(255,255,255,0.38); margin-bottom: 8px; }
+  .wk-row { display: flex; align-items: center; gap: 9px; margin: 6px 0; font-size: 12px; }
+  .wk-row .wk-name { width: 68px; flex: none; color: rgba(255,255,255,0.72); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .wk-row .wk-bar { flex: 1; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+  .wk-row .wk-bar i { display: block; height: 100%; background: #4a7fa8; border-radius: 3px; }
+  .wk-row .wk-ms { width: 62px; flex: none; text-align: right; color: rgba(255,255,255,0.6);
+    font-variant-numeric: tabular-nums; }
   #extDateRow {
     display: flex; align-items: center; justify-content: space-between;
     gap: 8px; margin-bottom: 12px;
@@ -650,27 +705,27 @@
     <div id="statsHeatmap"></div>
     <div id="statsDayDetail"></div>
 
-    <h3>직접 추가한 시간</h3>
-    <div id="extSection">
+    <h3 class="ext-toggle" id="extToggle">
+      <span class="ext-caret">›</span><span>직접 추가한 시간</span>
+      <span id="extHeadSum"></span>
+    </h3>
+    <div id="extSection" hidden>
       <div id="extDateRow">
         <button class="ext-nav" id="extPrev" title="이전 날">‹</button>
         <div id="extDateLabel">—</div>
         <button class="ext-nav" id="extNext" title="다음 날">›</button>
       </div>
+      <div id="extSubjects"></div>
       <div class="ext-form">
         <input class="ext-num" id="extHour" type="number" min="0" max="23" placeholder="0" inputmode="numeric">
         <span class="ext-unit">시간</span>
         <input class="ext-num" id="extMin" type="number" min="0" max="59" placeholder="0" inputmode="numeric">
         <span class="ext-unit">분</span>
-        <input id="extLabel" type="text" placeholder="열품타" list="extLabelList" maxlength="20">
-        <datalist id="extLabelList">
-          <option value="열품타"></option><option value="스터디카페"></option>
-          <option value="학교"></option><option value="독서실"></option>
-        </datalist>
         <button id="extAddBtn">추가</button>
       </div>
       <div id="extList"></div>
       <div id="extSummary"></div>
+      <div id="extWeek"></div>
     </div>
 
     <h3>기기 동기화</h3>
@@ -1891,7 +1946,8 @@
   function openStats() {
     renderStatsPanel();
     extViewOffset = 0;
-    renderExtPanel();
+    extSetOpen(localStorage.getItem(EXT_OPEN_KEY) === "1");
+    renderExtHead();
     statsDayDetail.textContent = "막대나 칸을 클릭·호버하면 날짜별 기록이 보여요";
     renderSyncUI();
     statsDim.classList.add("open");
@@ -2194,7 +2250,7 @@
   // 쿼리를 붙이는 이유: 서비스워커는 페이지 앞단 프록시라 강제 새로고침(⌥⌘R)으로도
   // 못 건너뛴다. 옛 서비스워커가 옛 focus-sensor.js 를 계속 내주는 상황이 반복됐다.
   // 캐시에 없는 주소로 요청하면 옛 서비스워커도 네트워크로 나갈 수밖에 없다.
-  var SENSOR_V = "27";
+  var SENSOR_V = "28";
 
   function loadSensor() {
     if (window.FocusSensor) return Promise.resolve(true);
@@ -2516,7 +2572,12 @@
   // (현재 기기에만 저장된다. 기기 간 동기화는 studyTime_ 만 대상으로 한다)
   // ══════════════════════════════════════════════════════════════════
   var EXT_PREFIX = "studyExt_";
-  var extViewOffset = 0;   // 0 = 오늘, 1 = 어제 …
+  var EXT_SUBJECTS_KEY = "studyTimer_subjects";
+  var EXT_OPEN_KEY = "studyTimer_extOpen";
+  var DEFAULT_SUBJECTS = ["국어", "수학", "영어", "탐구"];
+  var extViewOffset = 0;      // 0 = 오늘, 1 = 어제 …
+  var extSubject = null;      // 선택된 과목
+  var extEditMode = false;    // 과목 삭제 모드
 
   function extEntriesForKey(key) {
     try {
@@ -2538,18 +2599,104 @@
       return true;
     } catch (e) { return false; }
   }
+  // 항목의 과목 이름. 예전에 label 로 저장한 것도 그대로 읽힌다.
+  function extNameOf(e) { return e.subject || e.label || "과목 없음"; }
 
+  function extSubjects() {
+    try {
+      var raw = localStorage.getItem(EXT_SUBJECTS_KEY);
+      if (raw) {
+        var arr = JSON.parse(raw);
+        if (Array.isArray(arr)) return arr;
+      }
+    } catch (e) {}
+    return DEFAULT_SUBJECTS.slice();
+  }
+  function extSaveSubjects(arr) {
+    try { localStorage.setItem(EXT_SUBJECTS_KEY, JSON.stringify(arr)); } catch (e) {}
+  }
+
+  var extToggleEl = document.getElementById("extToggle");
+  var extSectionEl = document.getElementById("extSection");
+  var extHeadSumEl = document.getElementById("extHeadSum");
+  var extSubjectsEl = document.getElementById("extSubjects");
   var extPrevBtn = document.getElementById("extPrev");
   var extNextBtn = document.getElementById("extNext");
   var extDateLabel = document.getElementById("extDateLabel");
   var extHourInput = document.getElementById("extHour");
   var extMinInput = document.getElementById("extMin");
-  var extLabelInput = document.getElementById("extLabel");
   var extAddBtn = document.getElementById("extAddBtn");
   var extListEl = document.getElementById("extList");
   var extSummaryEl = document.getElementById("extSummary");
+  var extWeekEl = document.getElementById("extWeek");
 
   function extViewKey() { return dayKeyForOffset(extViewOffset); }
+
+  function extSetOpen(open) {
+    extSectionEl.hidden = !open;
+    extToggleEl.classList.toggle("open", open);
+    try { localStorage.setItem(EXT_OPEN_KEY, open ? "1" : "0"); } catch (e) {}
+    if (open) renderExtPanel();
+  }
+
+  function renderExtChips() {
+    var subs = extSubjects();
+    if (extSubject && subs.indexOf(extSubject) < 0) extSubject = null;
+    if (!extSubject && subs.length) extSubject = subs[0];
+    extSubjectsEl.innerHTML = "";
+
+    subs.forEach(function (name) {
+      var chip = document.createElement("button");
+      chip.className = "ext-chip" + (name === extSubject ? " on" : "");
+      var t = document.createElement("span");
+      t.textContent = name;
+      chip.appendChild(t);
+      if (extEditMode) {
+        var x = document.createElement("span");
+        x.className = "chip-x";
+        x.textContent = "×";
+        chip.appendChild(x);
+      }
+      chip.onclick = function () {
+        if (extEditMode) {
+          var next = extSubjects().filter(function (n) { return n !== name; });
+          extSaveSubjects(next);
+          if (extSubject === name) extSubject = null;
+          renderExtChips();
+        } else {
+          extSubject = name;
+          renderExtChips();
+        }
+      };
+      extSubjectsEl.appendChild(chip);
+    });
+
+    // 새 과목 입력
+    var input = document.createElement("input");
+    input.id = "extNewSubject";
+    input.type = "text";
+    input.placeholder = "+ 과목";
+    input.maxLength = 12;
+    input.onkeydown = function (e) {
+      e.stopPropagation();
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      var v = (input.value || "").trim();
+      if (!v) return;
+      var subs2 = extSubjects();
+      if (subs2.indexOf(v) < 0) { subs2.push(v); extSaveSubjects(subs2); }
+      extSubject = v;
+      input.value = "";
+      renderExtChips();
+    };
+    extSubjectsEl.appendChild(input);
+
+    var edit = document.createElement("button");
+    edit.id = "extEditBtn";
+    edit.textContent = extEditMode ? "완료" : "편집";
+    edit.onclick = function () { extEditMode = !extEditMode; renderExtChips(); };
+    extSubjectsEl.appendChild(edit);
+  }
 
   function renderExtPanel() {
     var key = extViewKey();
@@ -2559,6 +2706,8 @@
       "<small>" + (extViewOffset === 0 ? "오늘" : extViewOffset + "일 전") + "</small>";
     extNextBtn.disabled = extViewOffset === 0;
     extPrevBtn.disabled = extViewOffset >= 29;
+
+    renderExtChips();
 
     var entries = extEntriesForKey(key);
     extListEl.innerHTML = "";
@@ -2573,7 +2722,7 @@
         row.className = "ext-item";
         var name = document.createElement("div");
         name.className = "ext-name";
-        name.textContent = e.label || "직접 입력";
+        name.textContent = extNameOf(e);
         var ms = document.createElement("div");
         ms.className = "ext-ms";
         ms.textContent = formatStudyTime(e.ms);
@@ -2588,13 +2737,43 @@
     }
 
     var measured = parseInt(localStorage.getItem("studyTime_" + key) || "0", 10) || 0;
-    var remote = totalStudyMsForKey(key) - measured - extTotalMsForKey(key);
     var added = extTotalMsForKey(key);
+    var remote = totalStudyMsForKey(key) - measured - added;
     var parts = ["측정 <b>" + formatStudyTime(measured) + "</b>"];
     if (remote > 0) parts.push("다른 기기 <b>" + formatStudyTime(remote) + "</b>");
     parts.push("추가 <b>" + formatStudyTime(added) + "</b>");
     extSummaryEl.innerHTML = parts.join(" + ") +
       " = 합계 <b>" + formatStudyTime(totalStudyMsForKey(key)) + "</b>";
+
+    renderExtWeek();
+    renderExtHead();
+  }
+
+  // 최근 7일 과목별 합계. 주간 목표를 과목 단위로 볼 수 있게 한다.
+  function renderExtWeek() {
+    var totals = {}, grand = 0;
+    for (var i = 6; i >= 0; i--) {
+      extEntriesForKey(dayKeyForOffset(i)).forEach(function (e) {
+        var n = extNameOf(e);
+        totals[n] = (totals[n] || 0) + (e.ms > 0 ? e.ms : 0);
+        grand += (e.ms > 0 ? e.ms : 0);
+      });
+    }
+    var names = Object.keys(totals).sort(function (a, b) { return totals[b] - totals[a]; });
+    if (!names.length) { extWeekEl.innerHTML = ""; return; }
+    var max = totals[names[0]] || 1;
+    var html = '<div class="wk-title">최근 7일 과목별 · 합계 ' + formatStudyTime(grand) + '</div>';
+    names.forEach(function (n) {
+      html += '<div class="wk-row"><div class="wk-name">' + n + '</div>' +
+        '<div class="wk-bar"><i style="width:' + Math.max(3, Math.round(totals[n] / max * 100)) + '%"></i></div>' +
+        '<div class="wk-ms">' + formatStudyTime(totals[n]) + '</div></div>';
+    });
+    extWeekEl.innerHTML = html;
+  }
+
+  function renderExtHead() {
+    var t = extTotalMsForKey(todayKey());
+    extHeadSumEl.textContent = t > 0 ? "오늘 " + formatStudyTime(t) : "";
   }
 
   function extRemove(key, idx) {
@@ -2612,11 +2791,7 @@
     if (ms <= 0) { extHourInput.focus(); return; }
     var key = extViewKey();
     var entries = extEntriesForKey(key);
-    entries.push({
-      ms: ms,
-      label: (extLabelInput.value || "").trim() || "직접 입력",
-      at: Date.now()
-    });
+    entries.push({ ms: ms, subject: extSubject || "과목 없음", at: Date.now() });
     if (!extSaveForKey(key, entries)) return;
     extHourInput.value = ""; extMinInput.value = "";
     extAfterChange();
@@ -2631,6 +2806,7 @@
     statsDayDetail.textContent = "막대나 칸을 클릭·호버하면 날짜별 기록이 보여요";
   }
 
+  extToggleEl.addEventListener("click", function () { extSetOpen(extSectionEl.hidden); });
   extAddBtn.addEventListener("click", extAdd);
   extPrevBtn.addEventListener("click", function () {
     if (extViewOffset < 29) { extViewOffset++; renderExtPanel(); }
@@ -2638,7 +2814,7 @@
   extNextBtn.addEventListener("click", function () {
     if (extViewOffset > 0) { extViewOffset--; renderExtPanel(); }
   });
-  [extHourInput, extMinInput, extLabelInput].forEach(function (el) {
+  [extHourInput, extMinInput].forEach(function (el) {
     el.addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); extAdd(); }
       e.stopPropagation();   // 타이머 단축키(Space 등)가 입력을 가로채지 않게
