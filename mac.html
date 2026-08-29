@@ -1058,6 +1058,24 @@
     return entries;
   }
 
+  // 과목별 일간 합계 { "2026-08-29": { "국어": 6300000 } }.
+  // 바탕화면 위젯이 stats.json 을 읽어 과목별로 보여주려면 이게 올라가야 한다.
+  function getAllLocalExtEntries() {
+    var out = {};
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (!k || k.indexOf(EXT_PREFIX) !== 0) continue;
+      var dateKey = k.slice(EXT_PREFIX.length);
+      var per = {};
+      extEntriesForKey(dateKey).forEach(function (e) {
+        var n = extNameOf(e);
+        if (e.ms > 0) per[n] = (per[n] || 0) + e.ms;
+      });
+      if (Object.keys(per).length) out[dateKey] = per;
+    }
+    return out;
+  }
+
   // dayKey가 "YYYY-MM-DD" 형식(0-padded)이라 문자열 비교가 곧 날짜 비교와 같다.
   function trimToRecentDays(dataObj, days) {
     var cutoffKey = dayKeyForOffset(days - 1);
@@ -1158,6 +1176,13 @@
       var trimmed = trimToRecentDays(merged, SYNC_KEEP_DAYS);
       if (Object.keys(trimmed).length !== Object.keys(remoteMine).length) changed = true;
 
+      // 과목별 기록. 총량과 달리 max 병합을 쓰지 않는다 — 항목을 지우면 줄어야 하는데
+      // max 로는 절대 안 줄어든다. 이 기기가 자기 칸의 주인이므로 그대로 덮어쓴다.
+      if (!remoteData.subjects) remoteData.subjects = {};
+      var extLocal = trimToRecentDays(getAllLocalExtEntries(), SYNC_KEEP_DAYS);
+      var extRemote = remoteData.subjects[DEVICE_ID] || {};
+      if (JSON.stringify(extLocal) !== JSON.stringify(extRemote)) changed = true;
+
       // cache other devices' sections for totalStudyMsForKey() / stats display
       var otherDevices = {};
       Object.keys(remoteData.devices).forEach(function (devId) {
@@ -1176,6 +1201,7 @@
       }
 
       remoteData.devices[DEVICE_ID] = trimmed;
+      remoteData.subjects[DEVICE_ID] = extLocal;
 
       putRemoteStats(token, remoteData, remote.sha).then(function () {
         lastSyncAt = Date.now();
@@ -2241,7 +2267,7 @@
   // 쿼리를 붙이는 이유: 서비스워커는 페이지 앞단 프록시라 강제 새로고침(⌥⌘R)으로도
   // 못 건너뛴다. 옛 서비스워커가 옛 focus-sensor.js 를 계속 내주는 상황이 반복됐다.
   // 캐시에 없는 주소로 요청하면 옛 서비스워커도 네트워크로 나갈 수밖에 없다.
-  var SENSOR_V = "30";
+  var SENSOR_V = "31";
 
   function loadSensor() {
     if (window.FocusSensor) return Promise.resolve(true);
@@ -2835,6 +2861,7 @@
 
   // 추가·삭제 뒤에는 오늘 표시와 통계까지 같이 갱신해야 한다.
   function extAfterChange() {
+    syncStats(true);          // 위젯이 바로 볼 수 있게 즉시 올린다
     renderExtPanel();
     renderStudyTime(totalStudyMsForKey(todayKey()));
     renderStatsPanel();
