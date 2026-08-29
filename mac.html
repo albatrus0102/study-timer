@@ -2267,7 +2267,7 @@
   // 쿼리를 붙이는 이유: 서비스워커는 페이지 앞단 프록시라 강제 새로고침(⌥⌘R)으로도
   // 못 건너뛴다. 옛 서비스워커가 옛 focus-sensor.js 를 계속 내주는 상황이 반복됐다.
   // 캐시에 없는 주소로 요청하면 옛 서비스워커도 네트워크로 나갈 수밖에 없다.
-  var SENSOR_V = "31";
+  var SENSOR_V = "32";
 
   function loadSensor() {
     if (window.FocusSensor) return Promise.resolve(true);
@@ -2869,6 +2869,17 @@
   }
 
   extToggleEl.addEventListener("click", function () { extSetOpen(extSectionEl.hidden); });
+
+  // 바탕화면 위젯이 "#add" 로 열면 곧바로 입력할 수 있게 한다.
+  // 위젯에서 직접 GitHub 에 쓰면 타이머 동기화가 자기 칸을 덮어써 지워지므로,
+  // 추가는 여기 한 곳에서만 일어나게 두고 위젯은 이 화면을 열어주는 역할만 한다.
+  function openAddFromHash() {
+    if (location.hash !== "#add") return;
+    openStats();
+    extSetOpen(true);
+    setTimeout(function () { extQuickInput.focus(); }, 0);
+  }
+  window.addEventListener("hashchange", openAddFromHash);
   extAddBtn.addEventListener("click", extAdd);
   extPrevBtn.addEventListener("click", function () {
     if (extViewOffset < 29) { extViewOffset++; renderExtPanel(); }
@@ -2884,6 +2895,7 @@
   });
 
   init();
+  openAddFromHash();
 })();
 </script>
 </body>
