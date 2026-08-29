@@ -471,6 +471,24 @@
   }
   #extAddBtn:hover { background: #274156; }
   #extAddBtn:disabled { opacity: 0.35; cursor: default; }
+  #extQuick {
+    flex: 1; min-width: 0; background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12); color: #fff; border-radius: 7px;
+    padding: 8px 11px; font: inherit; font-size: 14px;
+  }
+  #extQuick:focus { outline: none; border-color: rgba(120,170,220,0.6); background: rgba(255,255,255,0.09); }
+  #extPreview {
+    margin-top: 7px; font-size: 12px; min-height: 17px;
+    font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.45);
+  }
+  #extPreview b { color: #9fd3b0; font-weight: 600; }
+  #extPreview.bad { color: rgba(224,122,95,0.85); }
+  /* 키보드 포커스가 어디 있는지 보이게 한다. 이게 없어서 Tab 이 안 먹는 것처럼 느껴졌다. */
+  .ext-chip:focus-visible, .ext-nav:focus-visible, #extAddBtn:focus-visible,
+  #extQuick:focus-visible, #extNewSubject:focus-visible, #extEditBtn:focus-visible,
+  .ext-toggle:focus-visible {
+    outline: 2px solid rgba(120,170,220,0.75); outline-offset: 2px;
+  }
   #extList { margin-top: 12px; }
   .ext-item {
     display: flex; align-items: center; gap: 10px; padding: 8px 0;
@@ -717,12 +735,10 @@
       </div>
       <div id="extSubjects"></div>
       <div class="ext-form">
-        <input class="ext-num" id="extHour" type="number" min="0" max="23" placeholder="0" inputmode="numeric">
-        <span class="ext-unit">시간</span>
-        <input class="ext-num" id="extMin" type="number" min="0" max="59" placeholder="0" inputmode="numeric">
-        <span class="ext-unit">분</span>
+        <input id="extQuick" type="text" placeholder="국 145" autocomplete="off" maxlength="30">
         <button id="extAddBtn">추가</button>
       </div>
+      <div id="extPreview"></div>
       <div id="extList"></div>
       <div id="extSummary"></div>
       <div id="extWeek"></div>
@@ -1948,6 +1964,8 @@
     extViewOffset = 0;
     extSetOpen(localStorage.getItem(EXT_OPEN_KEY) === "1");
     renderExtHead();
+    // 펼쳐져 있으면 바로 칠 수 있게 커서를 둔다. S → "국 145" → Enter 로 끝나게.
+    if (!extSectionEl.hidden) setTimeout(function () { extQuickInput.focus(); }, 0);
     statsDayDetail.textContent = "막대나 칸을 클릭·호버하면 날짜별 기록이 보여요";
     renderSyncUI();
     statsDim.classList.add("open");
@@ -2250,7 +2268,7 @@
   // 쿼리를 붙이는 이유: 서비스워커는 페이지 앞단 프록시라 강제 새로고침(⌥⌘R)으로도
   // 못 건너뛴다. 옛 서비스워커가 옛 focus-sensor.js 를 계속 내주는 상황이 반복됐다.
   // 캐시에 없는 주소로 요청하면 옛 서비스워커도 네트워크로 나갈 수밖에 없다.
-  var SENSOR_V = "28";
+  var SENSOR_V = "29";
 
   function loadSensor() {
     if (window.FocusSensor) return Promise.resolve(true);
@@ -2574,7 +2592,7 @@
   var EXT_PREFIX = "studyExt_";
   var EXT_SUBJECTS_KEY = "studyTimer_subjects";
   var EXT_OPEN_KEY = "studyTimer_extOpen";
-  var DEFAULT_SUBJECTS = ["국어", "수학", "영어", "탐구"];
+  var DEFAULT_SUBJECTS = ["국어", "수학", "영어", "지구", "세지"];
   var extViewOffset = 0;      // 0 = 오늘, 1 = 어제 …
   var extSubject = null;      // 선택된 과목
   var extEditMode = false;    // 과목 삭제 모드
@@ -2623,8 +2641,8 @@
   var extPrevBtn = document.getElementById("extPrev");
   var extNextBtn = document.getElementById("extNext");
   var extDateLabel = document.getElementById("extDateLabel");
-  var extHourInput = document.getElementById("extHour");
-  var extMinInput = document.getElementById("extMin");
+  var extQuickInput = document.getElementById("extQuick");
+  var extPreviewEl = document.getElementById("extPreview");
   var extAddBtn = document.getElementById("extAddBtn");
   var extListEl = document.getElementById("extList");
   var extSummaryEl = document.getElementById("extSummary");
@@ -2636,7 +2654,7 @@
     extSectionEl.hidden = !open;
     extToggleEl.classList.toggle("open", open);
     try { localStorage.setItem(EXT_OPEN_KEY, open ? "1" : "0"); } catch (e) {}
-    if (open) renderExtPanel();
+    if (open) { renderExtPanel(); extQuickInput.focus(); }
   }
 
   function renderExtChips() {
@@ -2657,6 +2675,20 @@
         x.textContent = "×";
         chip.appendChild(x);
       }
+      // 라디오 그룹 패턴 — 묶음 전체가 탭 정지 하나, 안에서는 ← → 로 이동한다.
+      chip.tabIndex = (name === extSubject) ? 0 : -1;
+      chip.onkeydown = function (e) {
+        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+        e.preventDefault(); e.stopPropagation();
+        var list = extSubjects();
+        var i = list.indexOf(name);
+        if (i < 0) return;
+        var next = list[(i + (e.key === "ArrowRight" ? 1 : list.length - 1)) % list.length];
+        extSubject = next;
+        renderExtChips();
+        var el = extSubjectsEl.querySelector(".ext-chip.on");
+        if (el) el.focus();
+      };
       chip.onclick = function () {
         if (extEditMode) {
           var next = extSubjects().filter(function (n) { return n !== name; });
@@ -2730,6 +2762,7 @@
         del.className = "ext-del";
         del.textContent = "×";
         del.title = "삭제";
+        del.tabIndex = -1;    // 항목이 늘어날수록 탭 순서를 잡아먹는다. ⌘Z 로 취소하면 된다.
         del.onclick = function () { extRemove(key, idx); };
         row.appendChild(name); row.appendChild(ms); row.appendChild(del);
         extListEl.appendChild(row);
@@ -2784,18 +2817,114 @@
     extAfterChange();
   }
 
+  // ── 한 줄 입력 파서 ──
+  // "국 145" / "국어 145" / "국어 1:45" / "국어 1시간45분" / "145" 를 모두 받는다.
+  // 맨 숫자는 자릿수로 가른다: 1~2자리는 분, 3~4자리는 시+분.
+  //   45 → 45분   90 → 90분   145 → 1시간 45분   1030 → 10시간 30분
+  // 3~4자리인데 뒤 두 자리가 60 이상이면(175 등) 시·분으로 못 읽으므로 전체를 분으로 본다.
+  function extParseDuration(txt) {
+    var t = (txt || "").replace(/\s+/g, "");
+    if (!t) return null;
+    var m;
+    // 1:45 / 1;45
+    if ((m = t.match(/^(\d{1,2})[:;](\d{1,2})$/))) {
+      var mm = parseInt(m[2], 10);
+      if (mm > 59) return null;
+      return (parseInt(m[1], 10) * 60 + mm) * 60000;
+    }
+    // 1시간45분 / 1시간45 / 1h45 / 1시간
+    if ((m = t.match(/^(\d{1,2})\s*(?:시간|시|h|H)\s*(\d{1,2})?\s*(?:분|m|M)?$/))) {
+      var mm2 = m[2] ? parseInt(m[2], 10) : 0;
+      if (mm2 > 59) return null;
+      return (parseInt(m[1], 10) * 60 + mm2) * 60000;
+    }
+    // 45분 / 45m
+    if ((m = t.match(/^(\d{1,3})\s*(?:분|m|M)$/))) return parseInt(m[1], 10) * 60000;
+    // 맨 숫자
+    if ((m = t.match(/^(\d{1,4})$/))) {
+      var d = m[1];
+      if (d.length <= 2) return parseInt(d, 10) * 60000;
+      var h = parseInt(d.slice(0, d.length - 2), 10);
+      var mi = parseInt(d.slice(-2), 10);
+      if (mi > 59) return parseInt(d, 10) * 60000;   // 175 → 175분
+      return (h * 60 + mi) * 60000;
+    }
+    return null;
+  }
+
+  // "국 145" → { subject: "국어", ms: … }. 과목을 안 쓰면 지금 선택된 과목을 쓴다.
+  function extParseEntry(raw) {
+    var txt = (raw || "").trim();
+    if (!txt) return null;
+    // 공백이 있으면 첫 덩어리를 과목으로 본다("국어 어쩌구"가 과목명으로 먹히지 않게).
+    // 공백이 없으면 앞쪽 비숫자만 떼어낸다("국145" 도 되게).
+    var namePart, timePart;
+    var sp = txt.match(/^(\S+)\s+(.*)$/);
+    if (sp) { namePart = sp[1]; timePart = sp[2].trim(); }
+    else {
+      var m = txt.match(/^([^\d:;]*)(.*)$/);
+      namePart = (m[1] || "").trim();
+      timePart = (m[2] || "").trim();
+    }
+    var subject = extSubject;
+    if (namePart) {
+      var subs = extSubjects();
+      var hit = null;
+      for (var i = 0; i < subs.length; i++) if (subs[i] === namePart) { hit = subs[i]; break; }
+      if (!hit) for (var j = 0; j < subs.length; j++) {
+        if (subs[j].indexOf(namePart) === 0) { hit = subs[j]; break; }
+      }
+      if (!hit) return { error: "‘" + namePart + "’ 과목이 없습니다" };
+      subject = hit;
+    }
+    var ms = extParseDuration(timePart);
+    if (ms == null) return { error: "시간을 못 읽었습니다" };
+    if (ms <= 0) return { error: "0보다 커야 합니다" };
+    return { subject: subject || "과목 없음", ms: ms };
+  }
+
+  function renderExtPreview() {
+    var raw = extQuickInput.value.trim();
+    if (!raw) { extPreviewEl.className = ""; extPreviewEl.innerHTML = ""; return; }
+    var r = extParseEntry(raw);
+    if (!r || r.error) {
+      extPreviewEl.className = "bad";
+      extPreviewEl.textContent = (r && r.error) || "읽을 수 없습니다";
+      return;
+    }
+    extPreviewEl.className = "";
+    extPreviewEl.innerHTML = "<b>" + r.subject + " · " + formatStudyTime(r.ms) + "</b> — Enter 로 추가";
+  }
+
+  var extLastAdd = null;   // ⌘Z 로 되돌리기
+
   function extAdd() {
-    var h = parseInt(extHourInput.value || "0", 10) || 0;
-    var m = parseInt(extMinInput.value || "0", 10) || 0;
-    var ms = (h * 60 + m) * 60 * 1000;
-    if (ms <= 0) { extHourInput.focus(); return; }
+    var r = extParseEntry(extQuickInput.value);
+    if (!r || r.error) { renderExtPreview(); extQuickInput.focus(); return; }
     var key = extViewKey();
     var entries = extEntriesForKey(key);
-    entries.push({ ms: ms, subject: extSubject || "과목 없음", at: Date.now() });
+    entries.push({ ms: r.ms, subject: r.subject, at: Date.now() });
     if (!extSaveForKey(key, entries)) return;
-    extHourInput.value = ""; extMinInput.value = "";
+    extLastAdd = { key: key, index: entries.length - 1 };
+    extSubject = r.subject;
+    extQuickInput.value = "";
     extAfterChange();
-    extHourInput.focus();
+    extPreviewEl.className = "";
+    extPreviewEl.innerHTML = "<b>" + r.subject + " " + formatStudyTime(r.ms) + "</b> 추가됨 — ⌘Z 로 취소";
+    extQuickInput.focus();
+  }
+
+  function extUndo() {
+    if (!extLastAdd) return;
+    var entries = extEntriesForKey(extLastAdd.key);
+    if (extLastAdd.index < entries.length) {
+      entries.splice(extLastAdd.index, 1);
+      extSaveForKey(extLastAdd.key, entries);
+      extAfterChange();
+      extPreviewEl.className = "";
+      extPreviewEl.textContent = "취소했습니다";
+    }
+    extLastAdd = null;
   }
 
   // 추가·삭제 뒤에는 오늘 표시와 통계까지 같이 갱신해야 한다.
@@ -2814,11 +2943,11 @@
   extNextBtn.addEventListener("click", function () {
     if (extViewOffset > 0) { extViewOffset--; renderExtPanel(); }
   });
-  [extHourInput, extMinInput].forEach(function (el) {
-    el.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") { e.preventDefault(); extAdd(); }
-      e.stopPropagation();   // 타이머 단축키(Space 등)가 입력을 가로채지 않게
-    });
+  extQuickInput.addEventListener("input", renderExtPreview);
+  extQuickInput.addEventListener("keydown", function (e) {
+    e.stopPropagation();     // 타이머 단축키(Space 등)가 입력을 가로채지 않게
+    if (e.key === "Enter") { e.preventDefault(); extAdd(); }
+    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); extUndo(); }
   });
 
   init();
