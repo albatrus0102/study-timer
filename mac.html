@@ -1393,6 +1393,8 @@
       syncConnectBtn.click();
     } else if (e.key === "Escape") {
       e.preventDefault();
+      syncTokenInput.blur();
+      closeStats();
     }
     e.stopPropagation();
   });
@@ -3068,6 +3070,13 @@
     e.stopPropagation();     // 타이머 단축키(Space 등)가 입력을 가로채지 않게
     if (e.key === "Enter") { e.preventDefault(); extAdd(); }
     else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); extUndo(); }
+    // 통계를 열면 이 칸에 커서가 잡혀 있어서, ESC 를 여기서 받아주지 않으면
+    // 통계 창이 ESC 로 안 닫힌다. 쓰던 게 있으면 그것부터 지운다.
+    else if (e.key === "Escape") {
+      e.preventDefault();
+      if (extQuickInput.value) { extQuickInput.value = ""; renderExtPreview(); }
+      else { extQuickInput.blur(); closeStats(); }
+    }
   });
 
   init();
