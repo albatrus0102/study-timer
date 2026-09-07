@@ -59,6 +59,11 @@
 
   #studyTime { opacity: 0.9; }
 
+  /* 지금 재는 시간이 어느 과목으로 들어가는지. 클릭 또는 C 로 바꾼다. */
+  #subjChip { cursor: pointer; opacity: 0.45; }
+  #subjChip:hover { opacity: 0.8; }
+  #subjChip.on { opacity: 1; color: rgba(255,255,255,0.62); }
+
   /* bottom controls */
   #controls {
     position: absolute;
@@ -643,6 +648,7 @@
   <div id="meta">
     <span id="modeLabel">집중</span>
     <span id="studyTime">오늘: 0분</span>
+    <span id="subjChip" title="측정 중인 시간이 들어갈 과목 (C)">과목 —</span>
     <span id="focusChip"><i></i><span id="focusChipText">—</span></span>
   </div>
 
@@ -681,7 +687,7 @@
     <button id="focusBtn" class="ctrl-btn">집중 측정</button>
   </div>
 
-  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · 6 스톱워치 · N 건너뛰기 · S 통계 · M 음악 · P 재생/일시정지 · ,/. 곡 이동 · B 화면 끄기 · F 집중 측정</div>
+  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · 6 스톱워치 · N 건너뛰기 · S 통계 · M 음악 · P 재생/일시정지 · ,/. 곡 이동 · C 과목 · B 화면 끄기 · F 집중 측정</div>
 
   <div id="customDim"></div>
   <div id="customPanel">
@@ -789,6 +795,7 @@
   var timerEl = document.getElementById("timer");
   var modeLabelEl = document.getElementById("modeLabel");
   var studyTimeEl = document.getElementById("studyTime");
+  var subjChipEl = document.getElementById("subjChip");
   var startPauseBtn = document.getElementById("startPauseBtn");
   var resetBtn = document.getElementById("resetBtn");
   var skipBtn = document.getElementById("skipBtn");
@@ -925,11 +932,13 @@
 
   function addStudyTime(deltaMs) {
     if (deltaMs <= 0) return;
-    var key = "studyTime_" + todayKey();
+    var day = todayKey();
+    var key = "studyTime_" + day;
     var current = parseInt(localStorage.getItem(key) || "0", 10) || 0;
     var updated = current + deltaMs;
     localStorage.setItem(key, String(updated));
-    renderStudyTime(totalStudyMsForKey(todayKey()));
+    addSubjectTime(day, deltaMs);
+    renderStudyTime(totalStudyMsForKey(day));
   }
 
   function formatStudyTime(ms) {
@@ -944,6 +953,75 @@
 
   function renderStudyTime(ms) {
     studyTimeEl.textContent = "오늘: " + formatStudyTime(ms);
+  }
+
+  // ---------- 측정 시간의 과목 ----------
+  // 총량(studyTime_)은 건드리지 않고, 같은 시간을 과목별로 한 벌 더 적는다.
+  // 총량을 과목 합으로 대신하지 않는 이유: 과목을 안 고르고 잰 시간이 사라지면 안 되고,
+  // 이미 쌓인 기록·기기 동기화·바탕화면 위젯이 전부 studyTime_ 을 총량으로 믿고 있다.
+  var SUBJ_PREFIX = "studySubj_";        // studySubj_YYYY-MM-DD = {"수학": ms}
+  var CUR_SUBJ_KEY = "studyTimer_subject";
+  var curSubject = null;
+
+  function subjMapForKey(key) {
+    try {
+      var raw = localStorage.getItem(SUBJ_PREFIX + key);
+      if (!raw) return {};
+      var o = JSON.parse(raw);
+      return (o && typeof o === "object") ? o : {};
+    } catch (e) { return {}; }
+  }
+
+  function subjTotalMsForKey(key) {
+    var m = subjMapForKey(key), sum = 0;
+    Object.keys(m).forEach(function (n) { if (m[n] > 0) sum += m[n]; });
+    return sum;
+  }
+
+  function addSubjectTime(day, deltaMs) {
+    if (!curSubject || deltaMs <= 0) return;
+    var m = subjMapForKey(day);
+    m[curSubject] = (m[curSubject] || 0) + deltaMs;
+    try { localStorage.setItem(SUBJ_PREFIX + day, JSON.stringify(m)); } catch (e) {}
+  }
+
+  // 측정 총량을 고쳐 줄이면 과목별 내역도 같이 줄인다. 안 그러면 과목 합이 총량을 넘는다.
+  function subjTrimToTotal(key, totalMs) {
+    var m = subjMapForKey(key), names = Object.keys(m);
+    if (!names.length) return;
+    var sum = subjTotalMsForKey(key);
+    if (sum <= totalMs) return;
+    try {
+      if (totalMs <= 0) { localStorage.removeItem(SUBJ_PREFIX + key); return; }
+      var f = totalMs / sum, out = {};
+      names.forEach(function (n) { out[n] = Math.round(m[n] * f); });
+      localStorage.setItem(SUBJ_PREFIX + key, JSON.stringify(out));
+    } catch (e) {}
+  }
+
+  function renderSubjChip() {
+    subjChipEl.textContent = curSubject ? "과목 " + curSubject : "과목 —";
+    subjChipEl.classList.toggle("on", !!curSubject);
+  }
+
+  // 바꾸기 전에 모아둔 시간을 먼저 흘려보낸다. 안 그러면 최대 5초가 다음 과목에 붙는다.
+  function setSubject(name) {
+    flushStudyTime();
+    curSubject = name || null;
+    try {
+      if (curSubject) localStorage.setItem(CUR_SUBJ_KEY, curSubject);
+      else localStorage.removeItem(CUR_SUBJ_KEY);
+    } catch (e) {}
+    renderSubjChip();
+  }
+
+  // 기본 과목 + 없음 을 한 바퀴 돈다. 여섯 칸이라 키를 몇 번 두드리면 닿는다.
+  // 고를 목록을 따로 띄우지 않는 게 요점 — 화면에 새로 뜨는 게 없다.
+  function cycleSubject(dir) {
+    var list = DEFAULT_SUBJECTS.concat([null]);
+    var i = list.indexOf(curSubject);
+    if (i < 0) i = list.length - 1;      // 목록에 없는 과목이면 없음 자리에서 시작
+    setSubject(list[(i + dir + list.length) % list.length]);
   }
 
   function modeLabelText(m) {
@@ -1077,19 +1155,34 @@
 
   // 과목별 일간 합계 { "2026-08-29": { "국어": 6300000 } }.
   // 바탕화면 위젯이 stats.json 을 읽어 과목별로 보여주려면 이게 올라가야 한다.
-  function getAllLocalExtEntries() {
-    var out = {};
+  // 직접 넣은 시간(studyExt_)과 여기서 잰 시간의 과목 내역(studySubj_)을 합친다.
+  function getSubjectTotalsByDay() {
+    var days = {};
     for (var i = 0; i < localStorage.length; i++) {
       var k = localStorage.key(i);
-      if (!k || k.indexOf(EXT_PREFIX) !== 0) continue;
-      var dateKey = k.slice(EXT_PREFIX.length);
+      if (!k) continue;
+      if (k.indexOf(EXT_PREFIX) === 0) days[k.slice(EXT_PREFIX.length)] = 1;
+      else if (k.indexOf(SUBJ_PREFIX) === 0) days[k.slice(SUBJ_PREFIX.length)] = 1;
+    }
+    var out = {};
+    Object.keys(days).forEach(function (dateKey) {
       var per = {};
       extEntriesForKey(dateKey).forEach(function (e) {
         var n = extNameOf(e);
         if (e.ms > 0) per[n] = (per[n] || 0) + e.ms;
       });
-      if (Object.keys(per).length) out[dateKey] = per;
-    }
+      var sm = subjMapForKey(dateKey);
+      Object.keys(sm).forEach(function (n) {
+        if (sm[n] > 0) per[n] = (per[n] || 0) + sm[n];
+      });
+      var names = Object.keys(per);
+      if (!names.length) return;
+      // 키 순서를 고정한다. 동기화가 JSON 문자열 비교로 변경을 판단해서,
+      // 순서가 흔들리면 내용이 같아도 매번 올린 것으로 본다.
+      var sorted = {};
+      names.sort().forEach(function (n) { sorted[n] = per[n]; });
+      out[dateKey] = sorted;
+    });
     return out;
   }
 
@@ -1200,7 +1293,7 @@
       // 과목별 기록. 총량과 달리 max 병합을 쓰지 않는다 — 항목을 지우면 줄어야 하는데
       // max 로는 절대 안 줄어든다. 이 기기가 자기 칸의 주인이므로 그대로 덮어쓴다.
       if (!remoteData.subjects) remoteData.subjects = {};
-      var extLocal = trimToRecentDays(getAllLocalExtEntries(), SYNC_KEEP_DAYS);
+      var extLocal = trimToRecentDays(getSubjectTotalsByDay(), SYNC_KEEP_DAYS);
       var extRemote = remoteData.subjects[DEVICE_ID] || {};
       if (JSON.stringify(extLocal) !== JSON.stringify(extRemote)) changed = true;
 
@@ -1881,6 +1974,9 @@
     } else if (e.code === "Digit6" || e.code === "Numpad6") {
       e.preventDefault();
       selectPreset("stopwatch");
+    } else if (e.code === "KeyC") {
+      e.preventDefault();
+      cycleSubject(e.shiftKey ? -1 : 1);
     } else if (e.code === "KeyB") {
       e.preventDefault();
       blackoutEl.classList.toggle("on");
@@ -2226,6 +2322,8 @@
 
   // ---------- Init ----------
   function init() {
+    try { curSubject = localStorage.getItem(CUR_SUBJ_KEY) || null; } catch (e) {}
+    renderSubjChip();
     // restore custom preset first so "custom" is selectable below
     var storedCustom = parseInt(localStorage.getItem(CUSTOM_KEY) || "", 10);
     if (storedCustom >= 1 && storedCustom <= 300) {
@@ -2721,7 +2819,8 @@
     parts.push("추가 <b>" + formatStudyTime(added) + "</b>");
     extSummaryEl.innerHTML = parts.join(" + ") +
       " = 합계 <b>" + formatStudyTime(totalStudyMsForKey(key)) + "</b>" +
-      (measured > 0 ? ' <button id="extFix" type="button">고치기</button>' : "");
+      (measured > 0 ? ' <button id="extFix" type="button">고치기</button>' : "") +
+      subjBreakdownHtml(key, measured);
 
     // 측정 시간 정정. 통째로 지우는 게 아니라 값을 고친다 —
     // 타이머를 실수로 켜둔 몇 분만 빼고 나머지는 남겨야 하는 경우가 대부분이다.
@@ -2740,6 +2839,7 @@
         var m = parseInt(inp.value, 10);
         if (isNaN(m) || m < 0) { inp.focus(); return; }
         localStorage.setItem("studyTime_" + key, String(m * 60000));
+        subjTrimToTotal(key, m * 60000);
         // 이 표시가 없으면 다음 동기화 때 max 병합으로 원래 값이 되살아난다.
         localStorage.setItem(STUDY_FIX_PREFIX + key, String(Date.now()));
         extAfterChange();
@@ -2757,14 +2857,35 @@
     renderExtHead();
   }
 
+  // 그 날 측정한 시간이 어느 과목으로 들어갔는지. 과목을 안 고르고 잰 몫은 "과목 없음"으로 남는다.
+  function subjBreakdownHtml(key, measured) {
+    var m = subjMapForKey(key);
+    var names = Object.keys(m).filter(function (n) { return m[n] > 0; });
+    var rest = measured - subjTotalMsForKey(key);
+    if (!names.length) return "";
+    names.sort(function (a, b) { return m[b] - m[a]; });
+    var bits = names.map(function (n) { return n + " " + formatStudyTime(m[n]); });
+    if (rest >= 60000) bits.push("과목 없음 " + formatStudyTime(rest));
+    return '<div class="note" style="margin-top:6px">측정 내역 · ' + bits.join(" · ") + '</div>';
+  }
+
   // 최근 7일 과목별 합계. 주간 목표를 과목 단위로 볼 수 있게 한다.
   function renderExtWeek() {
     var totals = {}, grand = 0;
     for (var i = 6; i >= 0; i--) {
-      extEntriesForKey(dayKeyForOffset(i)).forEach(function (e) {
+      var dk = dayKeyForOffset(i);
+      extEntriesForKey(dk).forEach(function (e) {
         var n = extNameOf(e);
         totals[n] = (totals[n] || 0) + (e.ms > 0 ? e.ms : 0);
         grand += (e.ms > 0 ? e.ms : 0);
+      });
+      // 여기서 잰 시간도 과목을 골라뒀으면 같이 센다. 직접 넣은 것과 굳이 나누지 않는다 —
+      // 이 표가 답하는 질문은 "이번 주 과목별로 얼마나 했나" 하나뿐이다.
+      var sm = subjMapForKey(dk);
+      Object.keys(sm).forEach(function (n) {
+        if (!(sm[n] > 0)) return;
+        totals[n] = (totals[n] || 0) + sm[n];
+        grand += sm[n];
       });
     }
     var names = Object.keys(totals).sort(function (a, b) { return totals[b] - totals[a]; });
@@ -2940,6 +3061,8 @@
   extNextBtn.addEventListener("click", function () {
     if (extViewOffset > 0) { extViewOffset--; renderExtPanel(); }
   });
+  subjChipEl.addEventListener("click", function () { cycleSubject(1); });
+
   extQuickInput.addEventListener("input", renderExtPreview);
   extQuickInput.addEventListener("keydown", function (e) {
     e.stopPropagation();     // 타이머 단축키(Space 등)가 입력을 가로채지 않게
