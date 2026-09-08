@@ -1891,6 +1891,47 @@
   var blackoutEl = document.getElementById("blackout");
   blackoutEl.addEventListener("click", function () {
     blackoutEl.classList.remove("on");
+    syncWakeLock();
+  });
+
+  // ---------- 화면 잠금 방지 ----------
+  // 전체화면이거나 화면 끄기(B) 중이면 맥 화면이 꺼지지 않게 잡아둔다.
+  // 둘 다 사람이 직접 켠 "지금 쓰는 중" 상태다. 그 밖에는 잡지 않는다 —
+  // 타이머만 켜둔 채 자리를 뜨면 밤새 화면이 켜져 있게 된다.
+  // 탭이 가려지면 브라우저가 잠금을 저절로 풀기 때문에 돌아올 때 다시 잡는다.
+  var wakeLock = null;
+
+  function shouldKeepAwake() {
+    return !!document.fullscreenElement || blackoutEl.classList.contains("on");
+  }
+
+  function syncWakeLock() {
+    try {
+      if (!("wakeLock" in navigator)) return;
+      if (shouldKeepAwake()) {
+        if (wakeLock) return;
+        navigator.wakeLock.request("screen").then(function (lock) {
+          // 요청이 오가는 사이에 전체화면을 빠져나갔을 수 있다.
+          if (!shouldKeepAwake()) { lock.release().catch(function () {}); return; }
+          wakeLock = lock;
+          lock.addEventListener("release", function () {
+            if (wakeLock === lock) wakeLock = null;
+          });
+        }).catch(function () {});   // 미지원·거부·탭이 가려진 상태
+      } else if (wakeLock) {
+        var held = wakeLock;
+        wakeLock = null;
+        held.release().catch(function () {});
+      }
+    } catch (e) {
+      // 화면이 꺼지는 것 말고 잃을 게 없다. 조용히 넘어간다.
+    }
+  }
+
+  // 전체화면은 ESC·F11·창 버튼으로도 빠져나온다. 토글 함수가 아니라 이 이벤트에 건다.
+  document.addEventListener("fullscreenchange", syncWakeLock);
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") syncWakeLock();
   });
 
   // ---------- Controls ----------
@@ -1982,6 +2023,7 @@
     } else if (e.code === "KeyB") {
       e.preventDefault();
       blackoutEl.classList.toggle("on");
+      syncWakeLock();
     } else if (e.code === "Comma") {
       e.preventDefault();
       if (hasLoadedOnce) {
