@@ -639,6 +639,17 @@
     font-size: 11px;
     color: rgba(255,255,255,0.4);
   }
+  /* 사파리 → 잠금 앱 기록 옮기기 */
+  #moveRow { align-items: center; margin-top: 10px; }
+  #moveText { flex: 1; font-size: 11px; color: rgba(255,255,255,0.4); }
+  #moveInput {
+    width: 100%; box-sizing: border-box; height: 64px; resize: vertical;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px; color: rgba(255,255,255,0.85); font-size: 11px;
+    padding: 6px 8px; outline: none; font-family: ui-monospace, Menlo, monospace;
+  }
+  /* 잠금 앱 안에서는 창이 이미 화면을 덮으므로 전체화면 버튼이 필요 없다 */
+  .in-lock-app #fullscreenBtn { display: none; }
 </style>
 </head>
 <body>
@@ -747,6 +758,11 @@
         <span id="syncStatusText"></span>
         <button id="syncDisconnectBtn" class="ctrl-btn">해제</button>
       </div>
+      <div class="row" id="moveRow">
+        <span id="moveText"></span>
+        <button id="moveBtn" class="ctrl-btn" style="opacity:1;"></button>
+      </div>
+      <textarea id="moveInput" hidden spellcheck="false"></textarea>
     </div>
   </div>
 
@@ -952,7 +968,8 @@
   }
 
   function renderStudyTime(ms) {
-    studyTimeEl.textContent = "오늘: " + formatStudyTime(ms);
+    // 옮긴 뒤 사파리에서 무심코 재는 걸 알아채게 한다. 여기 쌓인 시간은 어디에도 안 올라간다.
+    studyTimeEl.textContent = "오늘: " + formatStudyTime(ms) + (movedToApp() ? " · 잠금 앱 사용 중" : "");
   }
 
   // ---------- 측정 시간의 과목 ----------
@@ -1342,6 +1359,8 @@
   function syncStats(immediate) {
     var token = getGithubToken();
     if (!token) return;
+    // 잠금 앱으로 옮긴 사파리가 계속 올리면 두 곳이 같은 기기 칸을 덮어써 시간이 빠진다.
+    if (movedToApp()) return;
     if (syncInProgress) return;
     var now = Date.now();
     if (!immediate && lastSyncAt && (now - lastSyncAt) < SYNC_MIN_INTERVAL_MS) return;
@@ -1365,7 +1384,9 @@
     }
     syncConnectRow.style.display = "none";
     syncStatusRow.style.display = "flex";
-    if (lastSyncError) {
+    if (movedToApp()) {
+      syncStatusText.textContent = "잠금 앱으로 옮김 · 여기선 동기화하지 않음";
+    } else if (lastSyncError) {
       syncStatusText.textContent = lastSyncError;
     } else if (lastSyncAt) {
       syncStatusText.textContent = "동기화 켜짐 · 마지막: " + formatHHMM(lastSyncAt);
@@ -1914,6 +1935,7 @@
   }
 
   function syncWakeLock() {
+    lockReport();
     try {
       if (!("wakeLock" in navigator)) return;
       if (shouldKeepAwake()) {
@@ -1935,6 +1957,23 @@
       // 화면이 꺼지는 것 말고 잃을 게 없다. 조용히 넘어간다.
     }
   }
+
+  // ---------- 잠금 앱 연동 ----------
+  // 맥 잠금 타이머 앱(StudyLock) 안에서 열렸을 때만 동작한다. 사파리에선 아무 일도 안 한다.
+  // 집중 시간이 흐르는 동안 잠그라고 앱에 알린다. 상태가 바뀔 때 바로 보내고, 그걸 빠뜨린
+  // 경로가 있어도 2초 안에 맞춰지도록 주기적으로도 보낸다. 앱은 10초 동안 소식이 없으면
+  // 스스로 잠금을 푼다 — 페이지가 멈췄는데 잠금만 남아 맥이 갇히는 일이 없게.
+  function lockBridge() {
+    try { return window.webkit.messageHandlers.studyLock || null; } catch (e) { return null; }
+  }
+  function lockReport() {
+    var b = lockBridge();
+    if (!b) return;
+    try {
+      b.postMessage({ lock: running && mode === "focus", dark: blackoutEl.classList.contains("on") });
+    } catch (e) {}
+  }
+  setInterval(lockReport, 2000);
 
   // 전체화면은 ESC·F11·창 버튼으로도 빠져나온다. 토글 함수가 아니라 이 이벤트에 건다.
   document.addEventListener("fullscreenchange", syncWakeLock);
@@ -2374,6 +2413,13 @@
 
   // ---------- Init ----------
   function init() {
+    if (lockBridge()) {
+      document.body.classList.add("in-lock-app");
+      var hintEl = document.getElementById("hint");
+      hintEl.textContent = hintEl.textContent.replace("⌘+Enter 전체화면 · ", "") +
+        " · 집중 중엔 다른 앱 잠김, 정지하면 풀림";
+    }
+    renderMoveRow();
     try { curSubject = localStorage.getItem(CUR_SUBJ_KEY) || null; } catch (e) {}
     renderSubjChip();
     // restore custom preset first so "custom" is selectable below
@@ -2456,6 +2502,7 @@
   // 타이머 상태가 바뀔 때마다 호출된다 (start/pause/reset/휴식 전환).
   // 센서는 "측정 켬 + 돌아가는 중 + 집중 모드" 일 때만 관측한다.
   function focusOnTimerChange() {
+    lockReport();
     try {
       if (!focusEnabled || !focusReady || !FS()) return;
       var want = running && mode === "focus";
@@ -3127,6 +3174,131 @@
       if (extQuickInput.value) { extQuickInput.value = ""; renderExtPreview(); }
       else { extQuickInput.blur(); closeStats(); }
     }
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // 사파리 → 잠금 앱 기록 옮기기
+  //
+  // 앱 안의 웹뷰는 사파리와 저장소가 따로라 빈 상태로 시작한다. 그대로 동기화를 켜면
+  // 빈 과목 기록이 GitHub 의 과목 기록을 덮어쓴다(과목은 max 병합이 아니라 덮어쓰기).
+  // 그래서 사파리에서 복사 → 앱에서 붙여넣기로 먼저 옮긴다. 토큰은 옮기지 않는다 —
+  // 클립보드에 비밀값을 올리지 않으려고. 앱에서 토큰을 다시 붙여넣으면 된다.
+  // ══════════════════════════════════════════════════════════════════
+  var MOVED_KEY = "studyTimer_movedToApp";
+  var MOVE_KEYS = ["studyTimer_deviceId", "studyTimer_preset", "studyTimer_customMinutes",
+    "studyTimer_subject", "studyTimer_lastYoutubeUrl", "studyTimer_focusEnabled", "focusSensor_cal"];
+  var MOVE_DAY_RE = /^study(Time|Ext|Subj|Fix)_\d{4}-\d{2}-\d{2}$/;
+  var moveRowEl = document.getElementById("moveRow");
+  var moveTextEl = document.getElementById("moveText");
+  var moveBtn = document.getElementById("moveBtn");
+  var moveInput = document.getElementById("moveInput");
+
+  function movedToApp() {
+    if (lockBridge()) return false;    // 앱 자신은 옮겨진 쪽이다
+    try { return !!localStorage.getItem(MOVED_KEY); } catch (e) { return false; }
+  }
+
+  function renderMoveRow() {
+    moveInput.hidden = true;
+    if (lockBridge()) {
+      moveTextEl.textContent = "사파리에서 쓰던 기록 가져오기";
+      moveBtn.textContent = "붙여넣기";
+    } else if (movedToApp()) {
+      moveTextEl.textContent = "잠금 앱으로 옮겼습니다. 여기서 재는 시간은 올라가지 않습니다";
+      moveBtn.textContent = "되돌리기";
+    } else {
+      moveTextEl.textContent = "잠금 타이머 앱으로 옮기기";
+      moveBtn.textContent = "기록 복사";
+    }
+  }
+
+  function movePayload() {
+    flushStudyTime();
+    var data = {};
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k && (MOVE_DAY_RE.test(k) || MOVE_KEYS.indexOf(k) >= 0)) data[k] = localStorage.getItem(k);
+    }
+    return JSON.stringify({ studyTimerMove: 1, at: Date.now(), data: data });
+  }
+
+  function markMoved() {
+    try { localStorage.setItem(MOVED_KEY, String(Date.now())); } catch (e) {}
+    renderMoveRow(); renderSyncUI(); renderStudyTime(getStoredStudyMs());
+  }
+
+  // 앱에서 이미 재기 시작한 기록이 있어도 잃지 않게 합친다.
+  function moveImport(text) {
+    var parsed;
+    try { parsed = JSON.parse(text); } catch (e) { return "형식이 맞지 않습니다. 사파리에서 '기록 복사'한 걸 그대로 붙여넣으세요."; }
+    if (!parsed || parsed.studyTimerMove !== 1 || !parsed.data) return "타이머 기록이 아닙니다.";
+    flushStudyTime();
+    var days = {}, d = parsed.data;
+    Object.keys(d).forEach(function (k) {
+      var v = d[k], cur = localStorage.getItem(k);
+      if (typeof v !== "string") return;
+      if (MOVE_DAY_RE.test(k)) days[k.slice(k.indexOf("_") + 1)] = 1;
+      if (k.indexOf("studyTime_") === 0) {
+        var a = parseInt(cur || "0", 10) || 0, b = parseInt(v, 10) || 0;
+        localStorage.setItem(k, String(Math.max(a, b)));
+      } else if (k.indexOf("studySubj_") === 0) {
+        var mine = {}, theirs = {};
+        try { mine = JSON.parse(cur || "{}") || {}; theirs = JSON.parse(v) || {}; } catch (e) { return; }
+        Object.keys(theirs).forEach(function (n) { mine[n] = Math.max(mine[n] || 0, theirs[n] || 0); });
+        localStorage.setItem(k, JSON.stringify(mine));
+      } else if (k.indexOf("studyExt_") === 0) {
+        // 항목 배열은 안전하게 합칠 방법이 없다. 합계가 큰 쪽을 남긴다.
+        var sum = function (raw) {
+          try { return (JSON.parse(raw) || []).reduce(function (t, e) { return t + (e.ms > 0 ? e.ms : 0); }, 0); }
+          catch (e) { return 0; }
+        };
+        if (!cur || sum(v) > sum(cur)) localStorage.setItem(k, v);
+      } else if (k === "studyTimer_deviceId") {
+        localStorage.setItem(k, v);    // 사파리와 같은 기기 칸을 이어서 쓴다
+      } else if (cur === null) {
+        localStorage.setItem(k, v);
+      }
+    });
+    return Object.keys(days).length;
+  }
+
+  moveBtn.addEventListener("click", function () {
+    if (lockBridge()) {
+      if (moveInput.hidden) {
+        moveInput.hidden = false;
+        moveInput.value = "";
+        moveInput.placeholder = "사파리에서 복사한 기록을 여기에 붙여넣기 (⌘V)";
+        moveBtn.textContent = "가져오기";
+        moveInput.focus();
+        return;
+      }
+      var r = moveImport(moveInput.value.trim());
+      if (typeof r === "string") { moveTextEl.textContent = r; return; }
+      moveTextEl.textContent = r + "일치 기록을 가져왔습니다. 다시 불러옵니다…";
+      moveInput.hidden = true;
+      setTimeout(function () { location.reload(); }, 1200);
+      return;
+    }
+    if (movedToApp()) {
+      try { localStorage.removeItem(MOVED_KEY); } catch (e) {}
+      renderMoveRow(); renderSyncUI(); renderStudyTime(getStoredStudyMs());
+      return;
+    }
+    var text = movePayload();
+    // 복사 성공을 기다리지 않고 바로 옮김 표시를 한다. 표시를 칸 닫힘(blur)에 걸었더니
+    // 그 이벤트가 안 오는 경우가 있어 사파리가 계속 동기화했다. 잘못 눌렀으면 되돌리기로 푼다.
+    markMoved();
+    var fallback = function () {
+      moveInput.hidden = false;
+      moveInput.value = text;
+      moveInput.focus(); moveInput.select();
+      moveTextEl.textContent = "자동 복사가 막혔습니다. 선택된 글자를 ⌘C 로 복사하세요";
+    };
+    try {
+      navigator.clipboard.writeText(text).then(function () {
+        moveTextEl.textContent = "복사했습니다. 잠금 앱의 통계 → 기록 가져오기에 붙여넣으세요";
+      }, fallback);
+    } catch (e) { fallback(); }
   });
 
   init();
