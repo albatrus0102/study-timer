@@ -137,32 +137,46 @@
     pointer-events: none;
   }
 
-  /* dictionary toggle + panel */
+  /* dictionary overlay — 잠금 중에도 화면을 안 나가고 봐야 해서 앱 안에 띄운다 */
+  #dictDim {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: none;
+    z-index: 50;
+  }
+  #dictDim.open { display: block; }
+
   #dictPanel {
-    position: absolute;
-    left: 18px;
-    bottom: 60px;
-    width: 300px;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.08);
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 860px;
+    max-width: 94vw;
+    height: 84vh;
+    background: rgba(22,22,22,0.97);
+    border: 1px solid rgba(255,255,255,0.12);
     border-radius: 8px;
-    padding: 10px;
-    backdrop-filter: blur(2px);
-    transition: opacity 0.2s ease;
+    padding: 14px;
+    backdrop-filter: blur(12px);
+    z-index: 51;
+    display: none;
+    flex-direction: column;
+  }
+  #dictPanel.open { display: flex; }
+
+  #dictCloseBtn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
   }
 
-  #dictPanel.collapsed {
-    height: 0;
-    padding: 0;
-    border: none;
-    overflow: hidden;
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  #dictPanel .row {
+  #dictBar {
     display: flex;
     gap: 6px;
+    align-items: center;
+    margin-right: 34px;   /* 닫기 버튼 자리 */
     margin-bottom: 8px;
   }
 
@@ -171,60 +185,25 @@
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.1);
     border-radius: 4px;
-    color: rgba(255,255,255,0.75);
-    font-size: 12px;
-    padding: 6px 8px;
+    color: rgba(255,255,255,0.85);
+    font-size: 13px;
+    padding: 7px 9px;
     outline: none;
     font-family: inherit;
     min-width: 0;
   }
   #dictQuery::placeholder { color: rgba(255,255,255,0.25); }
-
-  /* 버튼이 아니라 진짜 <a> 다 — 사용자가 직접 누르는 링크는 팝업 차단을 안 받는다 */
-  #dictSearch {
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.14);
-    border-radius: 4px;
-    color: rgba(255,255,255,0.7);
-    font-size: 11px;
-    padding: 6px 10px;
-    cursor: pointer;
-    font-family: inherit;
-    text-decoration: none;
-    display: flex;
-    align-items: center;
-    white-space: nowrap;
-  }
-  #dictSearch:hover { background: rgba(255,255,255,0.14); color: #fff; }
-
-  /* 새 탭이 막혔을 때만 나타나는 직접 클릭용 링크 */
-  #dictFallback {
-    display: none;
-    margin-top: 8px;
-    font-size: 11px;
-    color: rgba(130,180,255,0.85);
-    text-decoration: underline;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  #dictFallback.show { display: block; }
-
-  #dictKinds {
-    display: flex;
-    gap: 4px;
-  }
+  #dictQuery:focus { border-color: rgba(255,255,255,0.28); }
 
   .dict-kind-btn {
-    flex: 1;
     background: none;
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 4px;
     color: rgba(255,255,255,0.35);
     cursor: pointer;
     font-family: inherit;
-    font-size: 11px;
-    padding: 4px 0;
+    font-size: 12px;
+    padding: 6px 12px;
     transition: color 0.15s ease, border-color 0.15s ease;
   }
   .dict-kind-btn:hover { color: rgba(255,255,255,0.7); }
@@ -233,11 +212,49 @@
     border-color: rgba(255,255,255,0.28);
   }
 
-  #dictHint {
-    font-size: 10px;
-    color: rgba(255,255,255,0.28);
-    margin-top: 8px;
+  /* 사전 본문이 비어 보일 때를 위한 탈출구. 진짜 <a> 라서 팝업 차단을 안 받는다.
+     단 잠금 중에는 잠금 앱이 메인프레임 이동을 막으므로 안 열린다. */
+  #dictNewTab {
+    color: rgba(255,255,255,0.3);
+    font-size: 11px;
+    text-decoration: none;
+    padding: 6px 8px;
+    white-space: nowrap;
   }
+  #dictNewTab:hover { color: rgba(255,255,255,0.7); text-decoration: underline; }
+
+  /* 사전 본문. 네이버가 X-Frame-Options 를 안 보내서 iframe 이 된다 (2026-09-23 확인). */
+  #dictFrameWrap {
+    flex: 1;
+    min-height: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #fff;
+    position: relative;
+  }
+
+  #dictFrame {
+    width: 100%;
+    height: 100%;
+    border: none;
+    display: block;
+  }
+
+  /* 아직 아무것도 안 찾았을 때 / 네트워크가 없을 때 덮는 안내 */
+  #dictPlaceholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 24px;
+    background: rgba(22,22,22,0.97);
+    color: rgba(255,255,255,0.35);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  #dictPlaceholder.hidden { display: none; }
 
   /* custom duration panel */
   #customDim {
@@ -656,18 +673,21 @@
     <span id="focusChip"><i></i><span id="focusChipText">—</span></span>
   </div>
 
-  <div id="dictPanel" class="collapsed">
-    <div class="row">
-      <input id="dictQuery" type="text" placeholder="찾을 단어">
-      <a id="dictSearch" href="https://en.dict.naver.com/" target="_blank" rel="noopener">검색</a>
-    </div>
-    <div id="dictKinds">
+  <div id="dictDim"></div>
+  <div id="dictPanel">
+    <button id="dictCloseBtn" class="ctrl-btn">✕</button>
+    <div id="dictBar">
+      <input id="dictQuery" type="text" placeholder="찾을 단어" autocomplete="off" spellcheck="false">
       <button class="dict-kind-btn" data-dict="en">영어</button>
       <button class="dict-kind-btn" data-dict="ko">국어</button>
       <button class="dict-kind-btn" data-dict="hanja">한자</button>
+      <a id="dictNewTab" href="https://ko.dict.naver.com/" target="_blank" rel="noopener"
+         title="잠금이 풀려 있을 때만 열려요">새 탭</a>
     </div>
-    <div id="dictHint">Enter 또는 검색 누르기 · 새 탭에서 열려요</div>
-    <a id="dictFallback" href="#" target="_blank" rel="noopener"></a>
+    <div id="dictFrameWrap">
+      <iframe id="dictFrame" title="네이버 사전"></iframe>
+      <div id="dictPlaceholder">단어를 넣고 Enter · 사전 종류는 영어 / 국어 / 한자</div>
+    </div>
   </div>
 
   <div id="presets">
@@ -809,10 +829,12 @@
   var fullscreenBtn = document.getElementById("fullscreenBtn");
   var dictToggleBtn = document.getElementById("dictToggleBtn");
   var dictPanel = document.getElementById("dictPanel");
+  var dictDim = document.getElementById("dictDim");
+  var dictCloseBtn = document.getElementById("dictCloseBtn");
   var dictQueryInput = document.getElementById("dictQuery");
-  var dictSearchLink = document.getElementById("dictSearch");
-  var dictFallback = document.getElementById("dictFallback");
-  var dictKindsRow = document.getElementById("dictKinds");
+  var dictFrame = document.getElementById("dictFrame");
+  var dictPlaceholder = document.getElementById("dictPlaceholder");
+  var dictNewTab = document.getElementById("dictNewTab");
   var presetBtns = Array.prototype.slice.call(document.querySelectorAll(".preset-btn"));
   var customDim = document.getElementById("customDim");
   var customPanel = document.getElementById("customPanel");
@@ -2036,7 +2058,7 @@
       if (customPanel.classList.contains("open")) {
         e.preventDefault();
         closeCustomInput();
-      } else if (!dictPanel.classList.contains("collapsed")) {
+      } else if (dictPanel.classList.contains("open")) {
         e.preventDefault();
         closeDictPanel();
       } else if (focusPanel.classList.contains("open")) {
@@ -2151,13 +2173,13 @@
   });
 
   // ---------- 네이버 사전 ----------
-  // 사전 본문은 X-Frame-Options 때문에 iframe 으로 못 띄운다. 새 탭으로 연다.
+  // 잠금 중에는 화면을 못 나가니까 새 탭으로 열면 못 본다. 그래서 앱 안에 iframe 으로 띄운다.
+  // 네이버 사전은 X-Frame-Options 도 CSP frame-ancestors 도 안 보내서 iframe 이 된다
+  // (2026-09-23 실제로 확인). 잠금 앱도 메인프레임이 아닌 네비게이션은 그냥 통과시킨다
+  // (main.swift decidePolicyFor 의 !frame.isMainFrame 분기).
   //
-  // 새 탭을 window.open() 으로만 열면 조용히 실패한다 — 사파리 팝업 차단, 그리고
-  // 잠금 앱 웹뷰(WKWebView)는 window.open 을 아예 무시한다. 눌러도 아무 일이 없다.
-  // 그래서 검색은 진짜 <a target="_blank"> 링크로 만들었다. 사용자가 직접 누르는
-  // 링크는 어떤 브라우저도 막지 않는다. Enter 로 들어온 경우만 window.open 을 쓰고,
-  // 그게 막히면 누를 수 있는 링크를 패널에 띄운다.
+  // iframe 은 처음 검색할 때까지 만들지 않는다 — 오프라인 독서실에서 앱을 열기만 해도
+  // 네이버를 때리면 안 된다.
   var DICT_KIND_KEY = "studyTimer_dictKind";
   var DICT_BASE = {
     en: "https://en.dict.naver.com/#/search?query=",
@@ -2165,6 +2187,7 @@
     hanja: "https://hanja.dict.naver.com/#/search?query="
   };
   var dictKind = "en";
+  var dictLastUrl = null;
 
   try {
     var storedKind = localStorage.getItem(DICT_KIND_KEY);
@@ -2172,7 +2195,7 @@
   } catch (e) {}
 
   function renderDictKinds() {
-    var btns = dictKindsRow.querySelectorAll(".dict-kind-btn");
+    var btns = dictPanel.querySelectorAll(".dict-kind-btn");
     for (var i = 0; i < btns.length; i++) {
       btns[i].classList.toggle("active", btns[i].getAttribute("data-dict") === dictKind);
     }
@@ -2183,66 +2206,50 @@
     dictKind = kind;
     try { localStorage.setItem(DICT_KIND_KEY, kind); } catch (e) {}
     renderDictKinds();
-  syncDictLink();
+    // 종류만 바꿔도 이미 찾던 단어가 있으면 바로 그 사전으로 다시 찾아준다
+    if (dictQueryInput.value.trim() && dictLastUrl) searchDict();
   }
 
-  function dictUrl() {
-    var q = dictQueryInput.value.trim();
-    if (!q) return null;
-    return DICT_BASE[dictKind] + encodeURIComponent(q);
-  }
-
-  // 검색 버튼의 href 를 항상 현재 입력·사전 종류에 맞춰 둔다.
-  // 이게 최신이어야 사용자가 누르는 순간 바로 맞는 주소로 열린다.
-  function syncDictLink() {
-    var url = dictUrl();
-    dictSearchLink.href = url || DICT_BASE[dictKind].replace(/#.*$/, "");
-    dictFallback.classList.remove("show");
-  }
-
-  // Enter 로 검색한 경우. window.open 이 막히면(팝업 차단·웹뷰) 대신 링크를 띄운다.
   function searchDict() {
-    var url = dictUrl();
-    if (!url) {
+    var q = dictQueryInput.value.trim();
+    if (!q) {
       dictQueryInput.focus();
       return;
     }
-    syncDictLink();
-    // 잠금 앱 웹뷰는 window.open 을 그냥 무시한다(createWebViewWith 미구현).
-    // 진짜 링크 클릭만 decidePolicyFor 로 넘어가서 기본 브라우저로 열린다.
-    if (lockBridge()) {
-      dictSearchLink.click();
+    if (!navigator.onLine) {
+      dictPlaceholder.textContent = "인터넷이 없어요 — 사전은 연결됐을 때만 돼요";
+      dictPlaceholder.classList.remove("hidden");
       return;
     }
-    var w = null;
-    try {
-      w = window.open(url, "_blank");
-      if (w) w.opener = null;   // noopener 대신 — 이래야 열렸는지 판정이 된다
-    } catch (e) {
-      w = null;
-    }
-    if (!w) {
-      dictFallback.textContent = "새 탭이 막혔어요 — 여기를 눌러 열기";
-      dictFallback.href = url;
-      dictFallback.classList.add("show");
-    }
+    var url = DICT_BASE[dictKind] + encodeURIComponent(q);
+    dictPlaceholder.textContent = "찾는 중…";
+    dictPlaceholder.classList.remove("hidden");
+    dictLastUrl = url;
+    dictNewTab.href = url;
+    dictFrame.src = url;
   }
 
+  // 사전 본문이 뜨면 안내를 걷는다. 안 뜨면 안내가 남아서 상태가 보인다.
+  dictFrame.addEventListener("load", function () {
+    if (dictLastUrl) dictPlaceholder.classList.add("hidden");
+  });
+
   function openDictPanel() {
-    dictPanel.classList.remove("collapsed");
-    syncDictLink();
+    dictPanel.classList.add("open");
+    dictDim.classList.add("open");
     dictQueryInput.focus();
     dictQueryInput.select();
   }
 
   function closeDictPanel() {
-    dictPanel.classList.add("collapsed");
+    dictPanel.classList.remove("open");
+    dictDim.classList.remove("open");
     if (dictQueryInput.blur) dictQueryInput.blur();
   }
 
   function toggleDictPanel() {
-    if (dictPanel.classList.contains("collapsed")) openDictPanel();
-    else closeDictPanel();
+    if (dictPanel.classList.contains("open")) closeDictPanel();
+    else openDictPanel();
   }
 
   dictToggleBtn.addEventListener("click", function (e) {
@@ -2250,21 +2257,23 @@
     if (e.target && e.target.blur) e.target.blur();
   });
 
-  // 링크 자체는 브라우저가 연다. 누르기 직전에 href 만 최신으로 맞춰 준다.
-  dictSearchLink.addEventListener("mousedown", syncDictLink);
-  dictSearchLink.addEventListener("click", function (e) {
-    if (!dictUrl()) {
+  dictDim.addEventListener("click", closeDictPanel);
+  dictCloseBtn.addEventListener("click", function (e) {
+    closeDictPanel();
+    if (e.target && e.target.blur) e.target.blur();
+  });
+
+  dictNewTab.addEventListener("click", function (e) {
+    if (!dictQueryInput.value.trim()) {
       e.preventDefault();
       dictQueryInput.focus();
     }
   });
-  dictQueryInput.addEventListener("input", syncDictLink);
 
-  dictKindsRow.addEventListener("click", function (e) {
+  dictPanel.addEventListener("click", function (e) {
     var btn = e.target.closest ? e.target.closest(".dict-kind-btn") : null;
     if (!btn) return;
     setDictKind(btn.getAttribute("data-dict"));
-    syncDictLink();
     dictQueryInput.focus();
     if (btn.blur) btn.blur();
   });
