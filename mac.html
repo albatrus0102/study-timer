@@ -137,8 +137,8 @@
     pointer-events: none;
   }
 
-  /* music toggle + panel */
-  #musicPanel {
+  /* dictionary toggle + panel */
+  #dictPanel {
     position: absolute;
     left: 18px;
     bottom: 60px;
@@ -151,8 +151,7 @@
     transition: opacity 0.2s ease;
   }
 
-  #musicPanel.collapsed {
-    /* keep iframe alive in DOM but hide visually per spec */
+  #dictPanel.collapsed {
     height: 0;
     padding: 0;
     border: none;
@@ -161,27 +160,27 @@
     pointer-events: none;
   }
 
-  #musicPanel .row {
+  #dictPanel .row {
     display: flex;
     gap: 6px;
     margin-bottom: 8px;
   }
 
-  #musicUrl {
+  #dictQuery {
     flex: 1;
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.1);
     border-radius: 4px;
     color: rgba(255,255,255,0.75);
-    font-size: 11px;
+    font-size: 12px;
     padding: 6px 8px;
     outline: none;
     font-family: inherit;
     min-width: 0;
   }
-  #musicUrl::placeholder { color: rgba(255,255,255,0.25); }
+  #dictQuery::placeholder { color: rgba(255,255,255,0.25); }
 
-  #musicLoad {
+  #dictSearch {
     background: rgba(255,255,255,0.08);
     border: 1px solid rgba(255,255,255,0.14);
     border-radius: 4px;
@@ -191,59 +190,35 @@
     cursor: pointer;
     font-family: inherit;
   }
-  #musicLoad:hover { background: rgba(255,255,255,0.14); color: #fff; }
+  #dictSearch:hover { background: rgba(255,255,255,0.14); color: #fff; }
 
-  #musicError {
-    font-size: 10px;
-    color: rgba(255,120,120,0.7);
-    min-height: 14px;
-    margin-bottom: 4px;
-  }
-
-  #musicFrameWrap {
-    width: 100%;
-    height: 180px;
-    border-radius: 4px;
-    overflow: hidden;
-    background: rgba(255,255,255,0.02);
-  }
-
-  #musicFrame {
-    width: 100%;
-    height: 100%;
-    border: none;
-    display: block;
-  }
-
-  #musicControlsRow {
+  #dictKinds {
     display: flex;
-    align-items: center;
     gap: 4px;
-    margin-top: 8px;
   }
 
-  .music-mini-btn {
+  .dict-kind-btn {
+    flex: 1;
     background: none;
-    border: none;
-    color: rgba(255,255,255,0.4);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 4px;
+    color: rgba(255,255,255,0.35);
     cursor: pointer;
     font-family: inherit;
-    font-size: 12px;
-    padding: 2px 6px;
-    opacity: 0.6;
-    transition: opacity 0.15s ease, color 0.15s ease;
+    font-size: 11px;
+    padding: 4px 0;
+    transition: color 0.15s ease, border-color 0.15s ease;
   }
-  .music-mini-btn:hover { opacity: 1; color: rgba(255,255,255,0.9); }
-  .music-mini-btn:active { opacity: 0.75; }
+  .dict-kind-btn:hover { color: rgba(255,255,255,0.7); }
+  .dict-kind-btn.active {
+    color: rgba(255,255,255,0.85);
+    border-color: rgba(255,255,255,0.28);
+  }
 
-  #musicTrackTitle {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  #dictHint {
     font-size: 10px;
-    color: rgba(255,255,255,0.3);
+    color: rgba(255,255,255,0.28);
+    margin-top: 8px;
   }
 
   /* custom duration panel */
@@ -663,20 +638,17 @@
     <span id="focusChip"><i></i><span id="focusChipText">—</span></span>
   </div>
 
-  <div id="musicPanel" class="collapsed">
+  <div id="dictPanel" class="collapsed">
     <div class="row">
-      <input id="musicUrl" type="text" placeholder="유튜브 URL 붙여넣기 (동영상 또는 재생목록)">
-      <button id="musicLoad" class="ctrl-btn" style="opacity:1;">재생</button>
+      <input id="dictQuery" type="text" placeholder="찾을 단어">
+      <button id="dictSearch" class="ctrl-btn" style="opacity:1;">검색</button>
     </div>
-    <div id="musicError"></div>
-    <div id="musicFrameWrap">
-      <div id="musicFrame"></div>
+    <div id="dictKinds">
+      <button class="dict-kind-btn" data-dict="en">영어</button>
+      <button class="dict-kind-btn" data-dict="ko">국어</button>
+      <button class="dict-kind-btn" data-dict="hanja">한자</button>
     </div>
-    <div id="musicControlsRow">
-      <button id="musicPlayPauseBtn" class="music-mini-btn" title="재생/일시정지">▶</button>
-      <button id="musicNextBtn" class="music-mini-btn" title="다음 곡">⏭</button>
-      <span id="musicTrackTitle"></span>
-    </div>
+    <div id="dictHint">Enter 검색 · 새 탭에서 네이버 사전이 열려요</div>
   </div>
 
   <div id="presets">
@@ -693,12 +665,12 @@
     <button id="resetBtn" class="ctrl-btn">리셋</button>
     <button id="skipBtn" class="ctrl-btn">건너뛰기</button>
     <button id="fullscreenBtn" class="ctrl-btn">전체화면</button>
-    <button id="musicToggleBtn" class="ctrl-btn">♪ 음악</button>
+    <button id="dictToggleBtn" class="ctrl-btn">📖 사전</button>
     <button id="statsBtn" class="ctrl-btn">통계</button>
     <button id="focusBtn" class="ctrl-btn">집중 측정</button>
   </div>
 
-  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · 6 스톱워치 · N 건너뛰기 · S 통계 · M 음악 · P 재생/일시정지 · ,/. 곡 이동 · C 과목 · B 화면 끄기 · F 집중 측정</div>
+  <div id="hint">Space 시작/정지 · R 리셋 · ⌘+Enter 전체화면 · 1-4 시간 선택 · 5 직접 입력 · 6 스톱워치 · N 건너뛰기 · S 통계 · D 사전 · C 과목 · B 화면 끄기 · F 집중 측정</div>
 
   <div id="customDim"></div>
   <div id="customPanel">
@@ -816,14 +788,11 @@
   var resetBtn = document.getElementById("resetBtn");
   var skipBtn = document.getElementById("skipBtn");
   var fullscreenBtn = document.getElementById("fullscreenBtn");
-  var musicToggleBtn = document.getElementById("musicToggleBtn");
-  var musicPanel = document.getElementById("musicPanel");
-  var musicUrlInput = document.getElementById("musicUrl");
-  var musicLoadBtn = document.getElementById("musicLoad");
-  var musicError = document.getElementById("musicError");
-  var musicPlayPauseBtn = document.getElementById("musicPlayPauseBtn");
-  var musicNextBtn = document.getElementById("musicNextBtn");
-  var musicTrackTitle = document.getElementById("musicTrackTitle");
+  var dictToggleBtn = document.getElementById("dictToggleBtn");
+  var dictPanel = document.getElementById("dictPanel");
+  var dictQueryInput = document.getElementById("dictQuery");
+  var dictSearchBtn = document.getElementById("dictSearch");
+  var dictKindsRow = document.getElementById("dictKinds");
   var presetBtns = Array.prototype.slice.call(document.querySelectorAll(".preset-btn"));
   var customDim = document.getElementById("customDim");
   var customPanel = document.getElementById("customPanel");
@@ -1476,33 +1445,6 @@
     }
   }
 
-  // ---------- Music auto pause/resume around sessions ----------
-  var musicPausedByApp = false;
-
-  function pauseMusicForBreak() {
-    if (!player || !playerReady) return;
-    try {
-      var state = player.getPlayerState ? player.getPlayerState() : -1;
-      if (state === YT.PlayerState.PLAYING) {
-        player.pauseVideo();
-        musicPausedByApp = true;
-      }
-    } catch (e) {
-      // ignore player errors silently
-    }
-  }
-
-  function resumeMusicForFocus() {
-    if (!musicPausedByApp) return;
-    musicPausedByApp = false;
-    if (!player || !playerReady) return;
-    try {
-      player.playVideo();
-    } catch (e) {
-      // ignore player errors silently
-    }
-  }
-
   // ---------- Timer control ----------
   // 시간이 흐르려면 이게 돌아야 한다. running 만 켜고 이걸 빠뜨리면
   // 화면이 그대로 멈춰 있는다(예전 건너뛰기 버그).
@@ -1522,8 +1464,6 @@
     }
     lastTickTime = Date.now();
     ensureTicking();
-    // 휴식이 끝나고 대기하던 사용자가 집중을 다시 시작하는 이 시점에 음악을 재개한다.
-    resumeMusicForFocus();
     updateDisplay();
     focusOnTimerChange();
     saveSession();
@@ -1609,9 +1549,6 @@
 
     remainingMs = durationForMode(mode);
     overtimeNotified = false;
-
-    // 휴식이 실제로 시작되는 이 시점에 음악을 일시정지한다.
-    pauseMusicForBreak();
 
     running = keepRunning;
     if (running) {
@@ -2026,11 +1963,6 @@
       toggleFullscreen();
       return;
     }
-    if (e.code === "F8" && mod) {
-      e.preventDefault();
-      toggleMusicPlayback();
-      return;
-    }
     // don't hijack other cmd/ctrl shortcuts (cmd+R reload 등)
     if (mod) return;
 
@@ -2071,32 +2003,22 @@
       e.preventDefault();
       blackoutEl.classList.toggle("on");
       syncWakeLock();
-    } else if (e.code === "Comma") {
-      e.preventDefault();
-      if (hasLoadedOnce) {
-        withPlayer(function (p) { if (p.previousVideo) p.previousVideo(); });
-      }
-    } else if (e.code === "Period") {
-      e.preventDefault();
-      if (hasLoadedOnce) {
-        withPlayer(function (p) { if (p.nextVideo) p.nextVideo(); });
-      }
     } else if (e.code === "KeyN" || e.code === "ArrowRight") {
       e.preventDefault();
       skip();
     } else if (e.code === "KeyS") {
       e.preventDefault();
       toggleStats();
-    } else if (e.code === "KeyM") {
+    } else if (e.code === "KeyD") {
       e.preventDefault();
-      musicPanel.classList.toggle("collapsed");
-    } else if (e.code === "KeyP") {
-      e.preventDefault();
-      toggleMusicPlayback();
+      toggleDictPanel();
     } else if (e.key === "Escape") {
       if (customPanel.classList.contains("open")) {
         e.preventDefault();
         closeCustomInput();
+      } else if (!dictPanel.classList.contains("collapsed")) {
+        e.preventDefault();
+        closeDictPanel();
       } else if (focusPanel.classList.contains("open")) {
         e.preventDefault();
         closeFocusPanel();
@@ -2208,208 +2130,91 @@
     if (e.target && e.target.blur) e.target.blur();
   });
 
-  // ---------- Music (YouTube IFrame Player API) ----------
-  var MUSIC_URL_KEY = "studyTimer_lastYoutubeUrl";
-  var DEFAULT_PLAYLIST_URL = "https://youtube.com/playlist?list=PLVx_Hd6b1shjuDCz05SZr_n_auFBpRIcn";
+  // ---------- 네이버 사전 ----------
+  // 사전 본문은 X-Frame-Options 때문에 iframe 으로 못 띄운다. 새 탭으로 연다.
+  var DICT_KIND_KEY = "studyTimer_dictKind";
+  var DICT_BASE = {
+    en: "https://en.dict.naver.com/#/search?query=",
+    ko: "https://ko.dict.naver.com/#/search?query=",
+    hanja: "https://hanja.dict.naver.com/#/search?query="
+  };
+  var dictKind = "en";
 
-  // parses a youtube URL into { videoId, listId } (either may be null, but not both)
-  function parseYoutubeUrl(rawUrl) {
-    var url;
-    try {
-      url = new URL(rawUrl.trim());
-    } catch (e) {
-      return null;
+  try {
+    var storedKind = localStorage.getItem(DICT_KIND_KEY);
+    if (storedKind && DICT_BASE[storedKind]) dictKind = storedKind;
+  } catch (e) {}
+
+  function renderDictKinds() {
+    var btns = dictKindsRow.querySelectorAll(".dict-kind-btn");
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle("active", btns[i].getAttribute("data-dict") === dictKind);
     }
-    var host = url.hostname.replace(/^www\./, "");
-    var validHosts = ["youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"];
-    if (validHosts.indexOf(host) === -1) return null;
-
-    var videoId = null;
-    var listId = url.searchParams.get("list"); // si= and other params are simply ignored
-
-    if (host === "youtu.be") {
-      videoId = url.pathname.replace(/^\//, "").split("/")[0] || null;
-    } else {
-      videoId = url.searchParams.get("v");
-      if (!videoId) {
-        // support /embed/VIDEOID or /shorts/VIDEOID paths
-        var m = url.pathname.match(/\/(embed|shorts)\/([^/?]+)/);
-        if (m) videoId = m[2];
-      }
-      // /playlist?list=... paths have no video id; listId above already captures it
-    }
-
-    if (!videoId && !listId) return null;
-    return { videoId: videoId || null, listId: listId || null };
   }
 
-  // ---------- YouTube IFrame Player API (loaded lazily on first use) ----------
-  var ytApiLoading = false;
-  var ytApiCallbacks = [];
-  var player = null;
-  var playerReady = false;
-  var playerReadyCallbacks = [];
-  var pendingShuffleForListId = null; // set right after loadPlaylist to arm the shuffle-once pattern
-  var hasLoadedOnce = false;
+  function setDictKind(kind) {
+    if (!DICT_BASE[kind]) return;
+    dictKind = kind;
+    try { localStorage.setItem(DICT_KIND_KEY, kind); } catch (e) {}
+    renderDictKinds();
+  }
 
-  function loadYouTubeIframeApiIfNeeded(cb) {
-    if (window.YT && window.YT.Player) {
-      cb();
+  function searchDict() {
+    var q = dictQueryInput.value.trim();
+    if (!q) {
+      dictQueryInput.focus();
       return;
     }
-    ytApiCallbacks.push(cb);
-    if (ytApiLoading) return;
-    ytApiLoading = true;
-    var previousReady = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = function () {
-      if (typeof previousReady === "function") {
-        try { previousReady(); } catch (e) {}
-      }
-      var callbacks = ytApiCallbacks;
-      ytApiCallbacks = [];
-      callbacks.forEach(function (fn) { fn(); });
-    };
-    var tag = document.createElement("script");
-    tag.src = "https://www.youtube.com/iframe_api";
-    document.head.appendChild(tag);
+    window.open(DICT_BASE[dictKind] + encodeURIComponent(q), "_blank", "noopener");
   }
 
-  function withPlayer(cb) {
-    if (playerReady && player) {
-      cb(player);
-      return;
-    }
-    playerReadyCallbacks.push(cb);
-    if (player) return; // creation already kicked off, just wait
-    loadYouTubeIframeApiIfNeeded(function () {
-      player = new YT.Player("musicFrame", {
-        width: "320",
-        height: "180",
-        playerVars: { autoplay: 0, playsinline: 1, rel: 0 },
-        events: {
-          onReady: function () {
-            playerReady = true;
-            var callbacks = playerReadyCallbacks;
-            playerReadyCallbacks = [];
-            callbacks.forEach(function (fn) { fn(player); });
-          },
-          onStateChange: onPlayerStateChange,
-          onError: function () {
-            musicError.textContent = "재생 오류가 발생했어요";
-          }
-        }
-      });
-    });
+  function openDictPanel() {
+    dictPanel.classList.remove("collapsed");
+    dictQueryInput.focus();
+    dictQueryInput.select();
   }
 
-  function onPlayerStateChange(e) {
-    updatePlayPauseIcon(e.data);
-    updateTrackTitle();
-
-    // robust shuffle pattern: setShuffle right after loadPlaylist frequently doesn't
-    // take effect, so wait for the first CUED/PLAYING state after loading, then shuffle
-    // and jump to a random track.
-    if (pendingShuffleForListId && (e.data === YT.PlayerState.CUED || e.data === YT.PlayerState.PLAYING)) {
-      pendingShuffleForListId = null;
-      try {
-        player.setShuffle(true);
-        var pl = player.getPlaylist();
-        var idx = (pl && pl.length) ? Math.floor(Math.random() * pl.length) : 0;
-        player.playVideoAt(idx);
-      } catch (err) {
-        // ignore
-      }
-    }
+  function closeDictPanel() {
+    dictPanel.classList.add("collapsed");
+    if (dictQueryInput.blur) dictQueryInput.blur();
   }
 
-  function updatePlayPauseIcon(state) {
-    var s = state;
-    if (typeof s !== "number") {
-      s = (player && player.getPlayerState) ? player.getPlayerState() : -1;
-    }
-    musicPlayPauseBtn.textContent = (s === YT.PlayerState.PLAYING) ? "⏸" : "▶";
+  function toggleDictPanel() {
+    if (dictPanel.classList.contains("collapsed")) openDictPanel();
+    else closeDictPanel();
   }
 
-  function updateTrackTitle() {
-    try {
-      var data = (player && player.getVideoData) ? player.getVideoData() : null;
-      var title = (data && data.title) ? data.title : "";
-      musicTrackTitle.textContent = title;
-      musicTrackTitle.title = title;
-    } catch (e) {
-      musicTrackTitle.textContent = "";
-    }
-  }
-
-  function loadMusic(rawUrl) {
-    musicError.textContent = "";
-    var parsed = parseYoutubeUrl(rawUrl);
-    if (!parsed) {
-      musicError.textContent = "올바른 유튜브 링크가 아니에요";
-      return;
-    }
-    localStorage.setItem(MUSIC_URL_KEY, rawUrl.trim());
-    hasLoadedOnce = true;
-    withPlayer(function (p) {
-      musicTrackTitle.textContent = "";
-      if (parsed.listId) {
-        // loadPlaylist 는 큐만 잡는 cuePlaylist 와 달리 바로 재생을 시작한다.
-        pendingShuffleForListId = parsed.listId;
-        p.loadPlaylist({ listType: "playlist", list: parsed.listId, index: 0, suggestedQuality: "small" });
-      } else if (parsed.videoId) {
-        pendingShuffleForListId = null;
-        p.loadVideoById(parsed.videoId);
-      }
-    });
-  }
-
-  musicLoadBtn.addEventListener("click", function (e) {
-    loadMusic(musicUrlInput.value);
+  dictToggleBtn.addEventListener("click", function (e) {
+    toggleDictPanel();
     if (e.target && e.target.blur) e.target.blur();
   });
-  musicUrlInput.addEventListener("keydown", function (e) {
+
+  dictSearchBtn.addEventListener("click", function (e) {
+    searchDict();
+    if (e.target && e.target.blur) e.target.blur();
+  });
+
+  dictKindsRow.addEventListener("click", function (e) {
+    var btn = e.target.closest ? e.target.closest(".dict-kind-btn") : null;
+    if (!btn) return;
+    setDictKind(btn.getAttribute("data-dict"));
+    dictQueryInput.focus();
+    if (btn.blur) btn.blur();
+  });
+
+  dictQueryInput.addEventListener("keydown", function (e) {
     if (e.key === "Enter") {
       e.preventDefault();
-      loadMusic(musicUrlInput.value);
+      searchDict();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeDictPanel();
     }
-    // prevent Space/R/etc. from being swallowed by global shortcuts while typing
+    // 입력 중엔 Space/R 같은 전역 단축키가 가로채지 않도록 막는다
     e.stopPropagation();
   });
 
-  musicToggleBtn.addEventListener("click", function (e) {
-    musicPanel.classList.toggle("collapsed");
-    if (e.target && e.target.blur) e.target.blur();
-  });
-
-  function toggleMusicPlayback() {
-    if (!hasLoadedOnce) {
-      // nothing loaded into the player yet: load current input and let it play
-      loadMusic(musicUrlInput.value);
-    } else {
-      withPlayer(function (p) {
-        var state = p.getPlayerState ? p.getPlayerState() : -1;
-        if (state === YT.PlayerState.PLAYING) {
-          p.pauseVideo();
-        } else {
-          p.playVideo();
-        }
-      });
-    }
-  }
-
-  musicPlayPauseBtn.addEventListener("click", function (e) {
-    toggleMusicPlayback();
-    if (e.target && e.target.blur) e.target.blur();
-  });
-
-  musicNextBtn.addEventListener("click", function (e) {
-    if (hasLoadedOnce) {
-      withPlayer(function (p) {
-        if (p.nextVideo) p.nextVideo();
-      });
-    }
-    if (e.target && e.target.blur) e.target.blur();
-  });
+  renderDictKinds();
 
   // ---------- Init ----------
   function init() {
@@ -2440,15 +2245,6 @@
     renderStudyTime(getStoredStudyMs());
     updateDisplay();
     focusOnTimerChange();
-
-    // prefill the music url input (auto-remember default playlist when nothing saved yet),
-    // but do NOT load the YouTube API or start any playback until the user acts.
-    var lastUrl = localStorage.getItem(MUSIC_URL_KEY);
-    if (!lastUrl) {
-      lastUrl = DEFAULT_PLAYLIST_URL;
-      localStorage.setItem(MUSIC_URL_KEY, lastUrl);
-    }
-    musicUrlInput.value = lastUrl;
 
     renderSyncUI();
     if (getGithubToken()) syncStats(true);
@@ -3186,7 +2982,7 @@
   // ══════════════════════════════════════════════════════════════════
   var MOVED_KEY = "studyTimer_movedToApp";
   var MOVE_KEYS = ["studyTimer_deviceId", "studyTimer_preset", "studyTimer_customMinutes",
-    "studyTimer_subject", "studyTimer_lastYoutubeUrl", "studyTimer_focusEnabled", "focusSensor_cal"];
+    "studyTimer_subject", "studyTimer_dictKind", "studyTimer_focusEnabled", "focusSensor_cal"];
   var MOVE_DAY_RE = /^study(Time|Ext|Subj|Fix)_\d{4}-\d{2}-\d{2}$/;
   var moveRowEl = document.getElementById("moveRow");
   var moveTextEl = document.getElementById("moveText");
