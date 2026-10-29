@@ -46,25 +46,20 @@
     transition: color 0.3s ease;
   }
 
-  /* 다이얼 — 카운트다운은 숫자 대신 남은 시간만큼 채워진 원판으로 보여준다.
-     멈춰 있을 때 원판을 돌리면 시간이 정해진다. 전체 한 바퀴 = 120분 */
+  /* 링 — 카운트다운은 숫자 대신 줄어드는 호로 보여준다. 설정한 시간이 한 바퀴.
+     멈춰 있을 때 링을 따라 돌리면 시간이 정해진다(돌리는 동안만 한 바퀴 = 120분). */
   #dialWrap { width: 58vmin; height: 58vmin; }
   #dialWrap.off { display: none; }
   #timer.off { display: none; }
   #dial { width: 100%; height: 100%; touch-action: none; overflow: visible; }
-  #dial .face { fill: none; stroke: rgba(255,255,255,0.10); stroke-width: 1.2; }
-  #dial .wedge { fill: rgba(255,255,255,0.85); transition: fill 0.3s ease; }
-  #dial.break .wedge { fill: rgba(255,255,255,0.32); }
-  /* 눈금·숫자는 중간 회색 — 흰 부채꼴 위에서도, 검은 바탕 위에서도 보여야 한다 */
-  #dial .tick { stroke: rgba(128,128,128,0.75); stroke-width: 1; }
-  #dial .tick.major { stroke: rgba(150,150,150,0.95); stroke-width: 1.6; }
-  #dial .lbl { fill: #8e8e8e; font-size: 7.5px; font-family: inherit;
-    text-anchor: middle; dominant-baseline: middle; }
-  #dial .hub { fill: #000; stroke: rgba(255,255,255,0.14); stroke-width: 1; }
-  #dial .num { fill: rgba(255,255,255,0.6); font-size: 13px; font-family: inherit;
+  #dial .track { fill: none; stroke: rgba(255,255,255,0.09); stroke-width: 11; }
+  #dial .arc { fill: none; stroke: rgba(255,255,255,0.82); stroke-width: 11;
+    stroke-linecap: round; transition: stroke 0.3s ease; }
+  #dial.break .arc { stroke: rgba(255,255,255,0.34); }
+  #dial .num { fill: rgba(255,255,255,0.5); font-size: 16px; font-family: inherit;
     text-anchor: middle; dominant-baseline: middle; font-variant-numeric: tabular-nums; }
-  #dial.setting .wedge { fill: rgba(255,255,255,0.95); }
-  #dial.setting .num { fill: rgba(255,255,255,0.9); }
+  #dial.setting .arc { stroke: rgba(255,255,255,0.95); }
+  #dial.setting .num { fill: rgba(255,255,255,0.9); font-size: 20px; }
 
   /* mode label + session count */
   #meta {
@@ -384,11 +379,9 @@
 
   <div id="dialWrap">
     <svg id="dial" viewBox="0 0 200 200" aria-label="타이머 다이얼">
-      <circle class="face" cx="100" cy="100" r="92"/>
-      <path id="wedge" class="wedge" d=""/>
-      <g id="ticks"></g>
-      <circle class="hub" cx="100" cy="100" r="21"/>
-      <text id="dialNum" class="num" x="100" y="100.5"></text>
+      <circle class="track" cx="100" cy="100" r="86"/>
+      <path id="wedge" class="arc" d=""/>
+      <text id="dialNum" class="num" x="100" y="101"></text>
     </svg>
   </div>
   <div id="timer">25:00</div>
@@ -408,7 +401,7 @@
     <button id="statsBtn" class="ctrl-btn">통계</button>
   </div>
 
-  <div id="hint">탭 시작/정지·휴식 · 멈춘 상태에서 원판을 돌려 시간 설정 · N 건너뛰기 · S 통계</div>
+  <div id="hint">탭 시작/정지·휴식 · 멈춘 상태에서 링을 돌려 시간 설정 · N 건너뛰기 · S 통계</div>
 
   <div id="customDim"></div>
   <div id="customPanel">
@@ -641,45 +634,25 @@
     return "휴식";
   }
 
-  // 원판 눈금은 한 번만 그린다 — 5분마다 눈금, 30분마다 굵은 눈금 + 숫자
-  (function buildTicks() {
-    var g = document.getElementById("ticks");
-    var html = "";
-    for (var m = 0; m < DIAL_FULL_MIN; m += 5) {
-      var a = (m / DIAL_FULL_MIN) * Math.PI * 2;
-      var major = (m % 30 === 0);
-      var r1 = major ? 84 : 87, r2 = 92;
-      var x1 = 100 + r1 * Math.sin(a), y1 = 100 - r1 * Math.cos(a);
-      var x2 = 100 + r2 * Math.sin(a), y2 = 100 - r2 * Math.cos(a);
-      html += '<line class="tick' + (major ? ' major' : '') + '" x1="' + x1.toFixed(2) + '" y1="' + y1.toFixed(2)
-            + '" x2="' + x2.toFixed(2) + '" y2="' + y2.toFixed(2) + '"/>';
-      if (major) {
-        var lx = 100 + 75 * Math.sin(a), ly = 100 - 75 * Math.cos(a);
-        html += '<text class="lbl" x="' + lx.toFixed(2) + '" y="' + ly.toFixed(2) + '">' + m + '</text>';
-      }
-    }
-    g.innerHTML = html;
-  })();
-
-  // 남은 비율(0~1)만큼 12시에서 시계 방향으로 채운 부채꼴
-  function wedgePath(frac) {
-    var r = 92;
+  // 12시에서 시계 방향으로 비율(0~1)만큼 그은 호. 전부면 온전한 원
+  function arcPath(frac) {
+    var r = 86;
     if (frac <= 0) return "";
-    if (frac >= 1) return "M100,8 A92,92 0 1 1 99.99,8 Z";
+    if (frac >= 1) return "M100,14 A86,86 0 1 1 99.99,14";
     var a = frac * Math.PI * 2;
-    var ex = 100 + r * Math.sin(a), ey = 100 - r * Math.cos(a);
-    return "M100,100 L100,8 A92,92 0 " + (frac > 0.5 ? 1 : 0) + " 1 " + ex.toFixed(2) + "," + ey.toFixed(2) + " Z";
+    return "M100,14 A86,86 0 " + (frac > 0.5 ? 1 : 0) + " 1 "
+         + (100 + r * Math.sin(a)).toFixed(2) + "," + (100 - r * Math.cos(a)).toFixed(2);
   }
 
   var lastWedge = null, lastDialNum = null, lastDialBreak = null;
   function renderDial(remainingMsNow, totalMs, isBreak) {
-    // 집중은 절대 눈금(한 바퀴 120분), 휴식은 짧으니 휴식 길이 전체를 한 바퀴로 편다
-    var frac = isBreak ? (totalMs > 0 ? remainingMsNow / totalMs : 0)
-                       : remainingMsNow / (DIAL_FULL_MIN * 60000);
-    var d = wedgePath(Math.max(0, Math.min(1, frac)));
+    // 평소엔 '설정한 시간 중 남은 비율'. 돌려서 맞추는 동안만 한 바퀴 = 120분 절대 눈금
+    var setting = dialEl.classList.contains("setting");
+    var frac = setting ? remainingMsNow / (DIAL_FULL_MIN * 60000)
+             : (totalMs > 0 ? remainingMsNow / totalMs : 0);
+    var d = arcPath(Math.max(0, Math.min(1, frac)));
     if (d !== lastWedge) { lastWedge = d; wedgeEl.setAttribute("d", d); }
-    var min = Math.ceil(remainingMsNow / 60000);
-    var num = (isBreak ? "휴식 " : "") + min + "분";
+    var num = String(Math.ceil(remainingMsNow / 60000));
     if (num !== lastDialNum) { lastDialNum = num; dialNumEl.textContent = num; }
     if (isBreak !== lastDialBreak) { lastDialBreak = isBreak; dialEl.classList.toggle("break", isBreak); }
   }
@@ -1559,6 +1532,7 @@
         if (!canSet()) return;                              // 돌아가는 중엔 돌려도 무시
         active.dragging = true;
         dialEl.classList.add("setting");
+        lastWedge = null;
       }
       setDialMinutes(minutesAt(e.clientX, e.clientY), false);
     });
@@ -1568,6 +1542,7 @@
       try { dialEl.releasePointerCapture(e.pointerId); } catch (err) {}
       if (was.dragging) {
         dialEl.classList.remove("setting");
+        lastWedge = null;                                   // 눈금 기준이 바뀌었으니 다시 그린다
         setDialMinutes(PRESETS["dial"].focus, true);
         saveSession();
       } else if (e.type === "pointerup") {
