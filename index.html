@@ -46,6 +46,26 @@
     transition: color 0.3s ease;
   }
 
+  /* 다이얼 — 카운트다운은 숫자 대신 남은 시간만큼 채워진 원판으로 보여준다.
+     멈춰 있을 때 원판을 돌리면 시간이 정해진다. 전체 한 바퀴 = 120분 */
+  #dialWrap { width: 58vmin; height: 58vmin; }
+  #dialWrap.off { display: none; }
+  #timer.off { display: none; }
+  #dial { width: 100%; height: 100%; touch-action: none; overflow: visible; }
+  #dial .face { fill: none; stroke: rgba(255,255,255,0.10); stroke-width: 1.2; }
+  #dial .wedge { fill: rgba(255,255,255,0.85); transition: fill 0.3s ease; }
+  #dial.break .wedge { fill: rgba(255,255,255,0.32); }
+  /* 눈금·숫자는 중간 회색 — 흰 부채꼴 위에서도, 검은 바탕 위에서도 보여야 한다 */
+  #dial .tick { stroke: rgba(128,128,128,0.75); stroke-width: 1; }
+  #dial .tick.major { stroke: rgba(150,150,150,0.95); stroke-width: 1.6; }
+  #dial .lbl { fill: #8e8e8e; font-size: 7.5px; font-family: inherit;
+    text-anchor: middle; dominant-baseline: middle; }
+  #dial .hub { fill: #000; stroke: rgba(255,255,255,0.14); stroke-width: 1; }
+  #dial .num { fill: rgba(255,255,255,0.6); font-size: 13px; font-family: inherit;
+    text-anchor: middle; dominant-baseline: middle; font-variant-numeric: tabular-nums; }
+  #dial.setting .wedge { fill: rgba(255,255,255,0.95); }
+  #dial.setting .num { fill: rgba(255,255,255,0.9); }
+
   /* mode label + session count */
   #meta {
     margin-top: 1.2vmin;
@@ -362,6 +382,15 @@
 <body>
 <div id="app">
 
+  <div id="dialWrap">
+    <svg id="dial" viewBox="0 0 200 200" aria-label="타이머 다이얼">
+      <circle class="face" cx="100" cy="100" r="92"/>
+      <path id="wedge" class="wedge" d=""/>
+      <g id="ticks"></g>
+      <circle class="hub" cx="100" cy="100" r="21"/>
+      <text id="dialNum" class="num" x="100" y="100.5"></text>
+    </svg>
+  </div>
   <div id="timer">25:00</div>
   <div id="meta">
     <span id="modeLabel">집중</span>
@@ -369,12 +398,9 @@
   </div>
 
   <div id="presets">
-    <button class="preset-btn" data-preset="25">25분</button>
-    <button class="preset-btn" data-preset="50">50분</button>
-    <button class="preset-btn" data-preset="80">80분</button>
-    <button class="preset-btn" data-preset="100">100분</button>
-    <button class="preset-btn" data-preset="custom" id="customPresetBtn">직접</button>
+    <button class="preset-btn" data-preset="dial" id="dialPresetBtn">타이머</button>
     <button class="preset-btn" data-preset="stopwatch" id="stopwatchPresetBtn">스톱워치</button>
+    <button class="preset-btn" data-preset="custom" id="customPresetBtn" style="display:none;">직접</button>
   </div>
 
   <div id="controls">
@@ -382,13 +408,13 @@
     <button id="statsBtn" class="ctrl-btn">통계</button>
   </div>
 
-  <div id="hint">탭 시작/정지·휴식 · 1-4 시간 · 5 직접 · 스톱워치 · N 건너뛰기 · S 통계</div>
+  <div id="hint">탭 시작/정지·휴식 · 멈춘 상태에서 원판을 돌려 시간 설정 · N 건너뛰기 · S 통계</div>
 
   <div id="customDim"></div>
   <div id="customPanel">
     <h3>집중 시간 직접 설정</h3>
     <div class="row">
-      <input id="customMinutes" type="number" min="1" max="300" placeholder="분 (예: 40)">
+      <input id="customMinutes" type="number" min="1" max="120" placeholder="분 (예: 40)">
       <button id="customConfirmBtn" class="ctrl-btn" style="opacity:1;">확인</button>
     </div>
     <div id="customHint">숫자만 입력 · Enter 확인 · ESC 취소</div>
@@ -433,15 +459,16 @@
 
   // focus-duration presets: focus minutes only. break/longBreak are computed dynamically
   // from actual elapsed focus time (see startBreakFromFocus).
+  // 카운트다운은 다이얼 하나뿐이다. 분 수는 다이얼을 돌려 정하고 DIAL_KEY 에 남는다.
+  var DIAL_KEY = "studyTimer_dialMinutes";
+  var DIAL_FULL_MIN = 120;        // 원판 한 바퀴
+  var DIAL_MAX_MIN = 120;
   var PRESETS = {
-    "25":  { focus: 25 },
-    "50":  { focus: 50 },
-    "80":  { focus: 80 },
-    "100": { focus: 100 }
+    "dial": { focus: 25 }
   };
 
   // ---------- State ----------
-  var currentPresetKey = "25"; // overwritten from localStorage during init()
+  var currentPresetKey = "dial"; // overwritten from localStorage during init()
   var mode = "focus";          // 'focus' | 'break' | 'longBreak'
   var running = false;
   var endTime = null;          // Date.now() timestamp when current session ends
@@ -457,6 +484,10 @@
 
   // ---------- DOM ----------
   var timerEl = document.getElementById("timer");
+  var dialWrap = document.getElementById("dialWrap");
+  var dialEl = document.getElementById("dial");
+  var wedgeEl = document.getElementById("wedge");
+  var dialNumEl = document.getElementById("dialNum");
   var modeLabelEl = document.getElementById("modeLabel");
   var studyTimeEl = document.getElementById("studyTime");
   var skipBtn = document.getElementById("skipBtn");
@@ -482,7 +513,7 @@
 
   // ---------- Helpers ----------
   function currentPreset() {
-    return PRESETS[currentPresetKey] || PRESETS["25"];
+    return PRESETS[currentPresetKey] || PRESETS["dial"];
   }
 
   function isStopwatchMode() {
@@ -610,9 +641,52 @@
     return "휴식";
   }
 
-  var lastRenderedClock = null, lastRenderedLabel = null;
+  // 원판 눈금은 한 번만 그린다 — 5분마다 눈금, 30분마다 굵은 눈금 + 숫자
+  (function buildTicks() {
+    var g = document.getElementById("ticks");
+    var html = "";
+    for (var m = 0; m < DIAL_FULL_MIN; m += 5) {
+      var a = (m / DIAL_FULL_MIN) * Math.PI * 2;
+      var major = (m % 30 === 0);
+      var r1 = major ? 84 : 87, r2 = 92;
+      var x1 = 100 + r1 * Math.sin(a), y1 = 100 - r1 * Math.cos(a);
+      var x2 = 100 + r2 * Math.sin(a), y2 = 100 - r2 * Math.cos(a);
+      html += '<line class="tick' + (major ? ' major' : '') + '" x1="' + x1.toFixed(2) + '" y1="' + y1.toFixed(2)
+            + '" x2="' + x2.toFixed(2) + '" y2="' + y2.toFixed(2) + '"/>';
+      if (major) {
+        var lx = 100 + 75 * Math.sin(a), ly = 100 - 75 * Math.cos(a);
+        html += '<text class="lbl" x="' + lx.toFixed(2) + '" y="' + ly.toFixed(2) + '">' + m + '</text>';
+      }
+    }
+    g.innerHTML = html;
+  })();
+
+  // 남은 비율(0~1)만큼 12시에서 시계 방향으로 채운 부채꼴
+  function wedgePath(frac) {
+    var r = 92;
+    if (frac <= 0) return "";
+    if (frac >= 1) return "M100,8 A92,92 0 1 1 99.99,8 Z";
+    var a = frac * Math.PI * 2;
+    var ex = 100 + r * Math.sin(a), ey = 100 - r * Math.cos(a);
+    return "M100,100 L100,8 A92,92 0 " + (frac > 0.5 ? 1 : 0) + " 1 " + ex.toFixed(2) + "," + ey.toFixed(2) + " Z";
+  }
+
+  var lastWedge = null, lastDialNum = null, lastDialBreak = null;
+  function renderDial(remainingMsNow, totalMs, isBreak) {
+    // 집중은 절대 눈금(한 바퀴 120분), 휴식은 짧으니 휴식 길이 전체를 한 바퀴로 편다
+    var frac = isBreak ? (totalMs > 0 ? remainingMsNow / totalMs : 0)
+                       : remainingMsNow / (DIAL_FULL_MIN * 60000);
+    var d = wedgePath(Math.max(0, Math.min(1, frac)));
+    if (d !== lastWedge) { lastWedge = d; wedgeEl.setAttribute("d", d); }
+    var min = Math.ceil(remainingMsNow / 60000);
+    var num = (isBreak ? "휴식 " : "") + min + "분";
+    if (num !== lastDialNum) { lastDialNum = num; dialNumEl.textContent = num; }
+    if (isBreak !== lastDialBreak) { lastDialBreak = isBreak; dialEl.classList.toggle("break", isBreak); }
+  }
+
+  var lastRenderedClock = null, lastRenderedLabel = null, lastShowDial = null;
   function updateDisplay() {
-    var clock, label;
+    var clock, label, showDial = false;
     if (isStopwatchMode() && mode === "focus") {
       var elapsed = swElapsedMs + ((running && swSegmentStart) ? (Date.now() - swSegmentStart) : 0);
       clock = formatStopwatch(elapsed);
@@ -622,9 +696,17 @@
       clock = "+" + formatClock(overtimeMs);
       label = "초과";
     } else {
+      // 카운트다운은 숫자 대신 원판. (초과·스톱워치처럼 세는 쪽만 숫자)
       var msToShow = running ? Math.max(0, endTime - Date.now()) : remainingMs;
       clock = formatClock(msToShow);
       label = modeLabelText(mode);
+      showDial = true;
+      renderDial(msToShow, durationForMode(mode), mode !== "focus");
+    }
+    if (showDial !== lastShowDial) {
+      lastShowDial = showDial;
+      dialWrap.classList.toggle("off", !showDial);
+      timerEl.classList.toggle("off", showDial);
     }
     // 화면 글자가 실제로 바뀔 때만 다시 그린다 (탭 제목 갱신은 특히 비싸다)
     if (clock !== lastRenderedClock || label !== lastRenderedLabel) {
@@ -1177,7 +1259,8 @@
   }
 
   function selectPreset(key) {
-    if (!PRESETS[key] && key !== "stopwatch") return;
+    if (key === "custom") key = "dial";
+    if (key !== "dial" && key !== "stopwatch") return;
     currentPresetKey = key;
     localStorage.setItem(PRESET_KEY, key);
 
@@ -1209,14 +1292,25 @@
     return { focus: min };
   }
 
+  // 직접 입력창도 다이얼 분 수를 바꾸는 입구다
   function applyCustomMinutes(min) {
-    PRESETS["custom"] = buildCustomPreset(min);
-    customPresetBtn.textContent = min + "분 (직접)";
+    setDialMinutes(min, true);
+  }
+
+  // 다이얼 분 수를 정한다. persist=false 면 돌리는 중(미리보기)이라 저장하지 않는다
+  function setDialMinutes(min, persist) {
+    min = Math.max(1, Math.min(DIAL_MAX_MIN, Math.round(min)));
+    PRESETS["dial"] = buildCustomPreset(min);
+    if (persist) localStorage.setItem(DIAL_KEY, String(min));
+    if (!isStopwatchMode() && mode === "focus" && !running) {
+      remainingMs = durationForMode("focus");
+      updateDisplay();
+    }
+    return min;
   }
 
   function openCustomInput() {
-    var stored = parseInt(localStorage.getItem(CUSTOM_KEY) || "", 10);
-    customMinutesInput.value = stored > 0 ? String(stored) : "";
+    customMinutesInput.value = String(PRESETS["dial"].focus);
     customDim.classList.add("open");
     customPanel.classList.add("open");
     customMinutesInput.focus();
@@ -1231,15 +1325,15 @@
 
   function confirmCustomInput() {
     var min = parseInt(customMinutesInput.value, 10);
-    if (!min || min < 1 || min > 300) {
+    if (!min || min < 1 || min > DIAL_MAX_MIN) {
       customMinutesInput.value = "";
-      customMinutesInput.placeholder = "1~300 사이 숫자";
+      customMinutesInput.placeholder = "1~" + DIAL_MAX_MIN + " 사이 숫자";
       return;
     }
-    localStorage.setItem(CUSTOM_KEY, String(min));
-    applyCustomMinutes(min);
     closeCustomInput();
-    selectPreset("custom");
+    selectPreset("dial");
+    setDialMinutes(min, true);
+    saveSession();
   }
 
   customConfirmBtn.addEventListener("click", confirmCustomInput);
@@ -1435,10 +1529,60 @@
     setTimeout(function () { if (r.parentNode) r.parentNode.removeChild(r); }, 500);
   }
 
-  // 빈 화면 아무 데나 탭하면 시작/정지 (버튼·패널·입력창 터치는 제외)
+  // ---------- 다이얼 조작 ----------
+  // 멈춰 있는 집중 상태에서 원판을 돌리면 시간이 정해진다. 거의 안 움직였으면 탭으로 보고 시작/정지.
+  (function () {
+    var active = null;   // {id, x, y, dragging}
+    var DRAG_PX = 8;
+
+    function minutesAt(clientX, clientY) {
+      var r = dialEl.getBoundingClientRect();
+      var dx = clientX - (r.left + r.width / 2), dy = clientY - (r.top + r.height / 2);
+      var deg = Math.atan2(dx, -dy) * 180 / Math.PI;       // 12시 = 0, 시계 방향
+      if (deg < 0) deg += 360;
+      var m = Math.round(deg / 360 * DIAL_FULL_MIN);
+      if (m === 0) m = DIAL_FULL_MIN;                       // 12시로 끝까지 돌리면 한 바퀴
+      return Math.max(1, Math.min(DIAL_MAX_MIN, m));
+    }
+    function canSet() { return !isStopwatchMode() && mode === "focus" && !running; }
+
+    dialEl.addEventListener("pointerdown", function (e) {
+      if (e.button != null && e.button !== 0) return;
+      active = { id: e.pointerId, x: e.clientX, y: e.clientY, dragging: false };
+      try { dialEl.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+    });
+    dialEl.addEventListener("pointermove", function (e) {
+      if (!active || e.pointerId !== active.id) return;
+      if (!active.dragging) {
+        if (Math.hypot(e.clientX - active.x, e.clientY - active.y) < DRAG_PX) return;
+        if (!canSet()) return;                              // 돌아가는 중엔 돌려도 무시
+        active.dragging = true;
+        dialEl.classList.add("setting");
+      }
+      setDialMinutes(minutesAt(e.clientX, e.clientY), false);
+    });
+    function finish(e) {
+      if (!active || e.pointerId !== active.id) return;
+      var was = active; active = null;
+      try { dialEl.releasePointerCapture(e.pointerId); } catch (err) {}
+      if (was.dragging) {
+        dialEl.classList.remove("setting");
+        setDialMinutes(PRESETS["dial"].focus, true);
+        saveSession();
+      } else if (e.type === "pointerup") {
+        showTapRipple(e.clientX, e.clientY);
+        togglePause();
+      }
+    }
+    dialEl.addEventListener("pointerup", finish);
+    dialEl.addEventListener("pointercancel", finish);
+  })();
+
+  // 빈 화면 아무 데나 탭하면 시작/정지 (버튼·패널·입력창·다이얼은 제외 — 다이얼은 위에서 직접 처리)
   document.getElementById("app").addEventListener("click", function (e) {
     var t = e.target;
-    if (t.closest && t.closest("button, input, #statsPanel, #customPanel, #statsDim, #customDim, #controls, #presets")) return;
+    if (t.closest && t.closest("button, input, #statsPanel, #customPanel, #statsDim, #customDim, #controls, #presets, #dialWrap")) return;
     showTapRipple(e.clientX, e.clientY);
     togglePause();
   });
@@ -1495,21 +1639,12 @@
     } else if (e.code === "KeyR") {
       e.preventDefault();
       reset();
-    } else if (e.code === "Digit1" || e.code === "Numpad1") {
-      e.preventDefault();
-      selectPreset("25");
-    } else if (e.code === "Digit2" || e.code === "Numpad2") {
-      e.preventDefault();
-      selectPreset("50");
-    } else if (e.code === "Digit3" || e.code === "Numpad3") {
-      e.preventDefault();
-      selectPreset("80");
-    } else if (e.code === "Digit4" || e.code === "Numpad4") {
-      e.preventDefault();
-      selectPreset("100");
     } else if (e.code === "Digit5" || e.code === "Numpad5") {
       e.preventDefault();
       openCustomInput();
+    } else if (e.code === "Digit6" || e.code === "Numpad6") {
+      e.preventDefault();
+      selectPreset(isStopwatchMode() ? "dial" : "stopwatch");
     } else if (e.code === "KeyN" || e.code === "ArrowRight") {
       e.preventDefault();
       skip();
@@ -1634,16 +1769,17 @@
 
   // ---------- Init ----------
   function init() {
-    // restore custom preset first so "custom" is selectable below
-    var storedCustom = parseInt(localStorage.getItem(CUSTOM_KEY) || "", 10);
-    if (storedCustom >= 1 && storedCustom <= 300) {
-      applyCustomMinutes(storedCustom);
-    }
-
+    // 다이얼 분 수 복원. 예전 프리셋(25/50/80/100/직접)을 쓰던 기기는 그 값을 이어받는다
+    var storedDial = parseInt(localStorage.getItem(DIAL_KEY) || "", 10);
     var storedPreset = localStorage.getItem(PRESET_KEY);
-    if (storedPreset && (PRESETS[storedPreset] || storedPreset === "stopwatch")) {
-      currentPresetKey = storedPreset;
+    if (!(storedDial >= 1)) {
+      var legacy = { "25": 25, "50": 50, "80": 80, "100": 100 };
+      if (legacy[storedPreset]) storedDial = legacy[storedPreset];
+      else if (storedPreset === "custom") storedDial = parseInt(localStorage.getItem(CUSTOM_KEY) || "", 10);
     }
+    if (storedDial >= 1) PRESETS["dial"] = buildCustomPreset(Math.min(DIAL_MAX_MIN, storedDial));
+    currentPresetKey = (storedPreset === "stopwatch") ? "stopwatch" : "dial";
+    localStorage.setItem(PRESET_KEY, currentPresetKey);
     remainingMs = isStopwatchMode() ? 0 : durationForMode(mode);
     updatePresetButtonsUI();
 
