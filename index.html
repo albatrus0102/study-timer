@@ -60,6 +60,13 @@
     text-anchor: middle; dominant-baseline: middle; font-variant-numeric: tabular-nums; }
   #dial.setting .arc { stroke: rgba(255,255,255,0.95); }
   #dial.setting .num { fill: rgba(255,255,255,0.9); font-size: 20px; }
+  /* 멈춰 있으면 호가 흐려지고, 돌아가는 중엔 호 끝의 점이 1초마다 숨쉰다 —
+     숫자가 없으니 '가고 있다'는 걸 이걸로 안다 */
+  #dial.paused .arc { stroke: rgba(255,255,255,0.36); }
+  #dial.paused .num { fill: rgba(255,255,255,0.32); }
+  #dial .tip { fill: rgba(255,255,255,0.95); display: none; }
+  #dial.running .tip { display: block; animation: tipPulse 1s ease-in-out infinite; }
+  @keyframes tipPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 
   /* mode label + session count */
   #meta {
@@ -381,6 +388,7 @@
     <svg id="dial" viewBox="0 0 200 200" aria-label="타이머 다이얼">
       <circle class="track" cx="100" cy="100" r="86"/>
       <path id="wedge" class="arc" d=""/>
+      <circle id="tip" class="tip" cx="100" cy="14" r="5.5"/>
       <text id="dialNum" class="num" x="100" y="101"></text>
     </svg>
   </div>
@@ -481,6 +489,7 @@
   var dialEl = document.getElementById("dial");
   var wedgeEl = document.getElementById("wedge");
   var dialNumEl = document.getElementById("dialNum");
+  var tipEl = document.getElementById("tip");
   var modeLabelEl = document.getElementById("modeLabel");
   var studyTimeEl = document.getElementById("studyTime");
   var skipBtn = document.getElementById("skipBtn");
@@ -644,14 +653,26 @@
          + (100 + r * Math.sin(a)).toFixed(2) + "," + (100 - r * Math.cos(a)).toFixed(2);
   }
 
-  var lastWedge = null, lastDialNum = null, lastDialBreak = null;
+  var lastWedge = null, lastDialNum = null, lastDialBreak = null, lastDialRunning = null;
   function renderDial(remainingMsNow, totalMs, isBreak) {
     // 평소엔 '설정한 시간 중 남은 비율'. 돌려서 맞추는 동안만 한 바퀴 = 120분 절대 눈금
     var setting = dialEl.classList.contains("setting");
     var frac = setting ? remainingMsNow / (DIAL_FULL_MIN * 60000)
              : (totalMs > 0 ? remainingMsNow / totalMs : 0);
-    var d = arcPath(Math.max(0, Math.min(1, frac)));
-    if (d !== lastWedge) { lastWedge = d; wedgeEl.setAttribute("d", d); }
+    frac = Math.max(0, Math.min(1, frac));
+    var d = arcPath(frac);
+    if (d !== lastWedge) {
+      lastWedge = d; wedgeEl.setAttribute("d", d);
+      var ta = frac * Math.PI * 2;                         // 호 끝에 점을 둔다
+      tipEl.setAttribute("cx", (100 + 86 * Math.sin(ta)).toFixed(2));
+      tipEl.setAttribute("cy", (100 - 86 * Math.cos(ta)).toFixed(2));
+      tipEl.style.visibility = frac > 0 ? "" : "hidden";
+    }
+    if (running !== lastDialRunning) {
+      lastDialRunning = running;
+      dialEl.classList.toggle("running", running);
+      dialEl.classList.toggle("paused", !running);
+    }
     var num = String(Math.ceil(remainingMsNow / 60000));
     if (num !== lastDialNum) { lastDialNum = num; dialNumEl.textContent = num; }
     if (isBreak !== lastDialBreak) { lastDialBreak = isBreak; dialEl.classList.toggle("break", isBreak); }
@@ -672,7 +693,7 @@
       // 카운트다운은 숫자 대신 원판. (초과·스톱워치처럼 세는 쪽만 숫자)
       var msToShow = running ? Math.max(0, endTime - Date.now()) : remainingMs;
       clock = formatClock(msToShow);
-      label = modeLabelText(mode);
+      label = modeLabelText(mode) + (running ? "" : " · 멈춤 — 탭하면 시작");
       showDial = true;
       renderDial(msToShow, durationForMode(mode), mode !== "focus");
     }
@@ -1508,20 +1529,31 @@
     var active = null;   // {id, x, y, dragging}
     var DRAG_PX = 8;
 
-    function minutesAt(clientX, clientY) {
+    function rawAngle(clientX, clientY) {
       var r = dialEl.getBoundingClientRect();
       var dx = clientX - (r.left + r.width / 2), dy = clientY - (r.top + r.height / 2);
       var deg = Math.atan2(dx, -dy) * 180 / Math.PI;       // 12시 = 0, 시계 방향
-      if (deg < 0) deg += 360;
-      var m = Math.round(deg / 360 * DIAL_FULL_MIN);
-      if (m === 0) m = DIAL_FULL_MIN;                       // 12시로 끝까지 돌리면 한 바퀴
+      return deg < 0 ? deg + 360 : deg;
+    }
+    // 손가락이 12시를 넘어가도 값이 1분으로 튀지 않도록, 직전 각도와의 차이를 누적해서
+    // 0~360 사이에 가둔다. 끝(120분)에 닿으면 더 돌려도 거기 멈춰 있다가, 되돌리면 풀린다.
+    function minutesFromDrag(clientX, clientY) {
+      var raw = rawAngle(clientX, clientY);
+      if (active.angle == null) { active.angle = raw; }
+      else {
+        var delta = raw - active.prevRaw;
+        if (delta > 180) delta -= 360; else if (delta < -180) delta += 360;
+        active.angle = Math.max(0, Math.min(360, active.angle + delta));
+      }
+      active.prevRaw = raw;
+      var m = Math.round(active.angle / 360 * DIAL_FULL_MIN);
       return Math.max(1, Math.min(DIAL_MAX_MIN, m));
     }
     function canSet() { return !isStopwatchMode() && mode === "focus" && !running; }
 
     dialEl.addEventListener("pointerdown", function (e) {
       if (e.button != null && e.button !== 0) return;
-      active = { id: e.pointerId, x: e.clientX, y: e.clientY, dragging: false };
+      active = { id: e.pointerId, x: e.clientX, y: e.clientY, dragging: false, angle: null, prevRaw: 0 };
       try { dialEl.setPointerCapture(e.pointerId); } catch (err) {}
       e.preventDefault();
     });
@@ -1534,7 +1566,7 @@
         dialEl.classList.add("setting");
         lastWedge = null;
       }
-      setDialMinutes(minutesAt(e.clientX, e.clientY), false);
+      setDialMinutes(minutesFromDrag(e.clientX, e.clientY), false);
     });
     function finish(e) {
       if (!active || e.pointerId !== active.id) return;
